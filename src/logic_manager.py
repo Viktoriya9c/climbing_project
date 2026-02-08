@@ -42,6 +42,7 @@ class TimeLogicManager:
                     
                     # Сохраняем результат в итоговый список
                     self.results.append({
+                        
                         "time": first_seen, 
                         "num": num, 
                         "name": name

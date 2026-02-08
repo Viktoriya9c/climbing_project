@@ -1,0 +1,31 @@
+climbing_project/
++-- main.py                     # Точка входа (CLI) 
++-- src/                        # Основная логика
+¦   +-- __init__.py
+¦   +-- matcher.py              # Работа с протоколом CSV
+¦   +-- logic_manager.py        # Логика подтверждения атлетов
+¦   +-- video_utils.py          # Работа с видео и временем
+¦   L-- detector.py             # Модели YOLO и EasyOCR
++-- tests/                      # Тесты и песочницы
+¦   +-- sandbox_final_logic.py  # Главная песочница
+¦   +-- test_all_paths.py       # Проверка корректности путей
+¦   +-- test_local_video.py     # Тест обработки видео
+¦   +-- test_ocr_back.py        # Тест OCR: номера на спине
+¦   +-- test_ocr_closeup.py     # Тест OCR: номера крупным планом
+¦   +-- test_opencv.py          # Проверка установки OpenCV
+¦   +-- test_protocol_matcher.py# Проверка логики сопоставления с CSV
+¦   +-- test_tracker_climbing.py# Тест трекинга на скалодроме
+¦   +-- test_tracker_simple.py  # Тест трекинга: базовые сценарии
+¦   +-- test_tracker_video.py   # Тест трекинга: длинные видео
+¦   +-- test_yolo_image.py      # Тест детекции YOLO на фото
+¦   L-- test_youtube.py         # Тест захвата потока с YouTube
++-- input/                      # Входные данные
+¦   +-- videos/                 # Локальные видеофайлы
+¦   +-- images/                 # Тестовые картинки
+¦   L-- protocols/              # Списки участников (CSV/Excel)
++-- outputs/                    # Результаты запусков
+¦   +-- detected/               # Видео/фото с отрисовкой
+¦   +-- cropped/                # Нарезанные фрагменты
+¦   L-- timestamps/             # Результаты в виде таблиц/логов
++-- logs/                       # Логи работы скриптов
+L--venv/                        # Библиотеки и окружение
