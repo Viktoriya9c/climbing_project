@@ -2,33 +2,36 @@ import os
 
 def format_time(ms):
     """
-    Преобразует время из миллисекунд в удобный текстовый формат MM:SS.
-    
-    Аргументы:
-        ms: время в миллисекундах (полученное из cv2.CAP_PROP_POS_MSEC).
-    Возвращает:
-        Строку формата "минуты:секунды" (например, "01:25").
+    Преобразует миллисекунды в текстовый формат (HH:MM:SS или MM:SS).
     """
-    # Вычисляем количество целых секунд
-    seconds = int((ms / 1000) % 60)
-    # Вычисляем количество целых минут
-    minutes = int((ms / (1000 * 60)) % 60)
+    if ms < 0:
+        return "00:00"
+
+    # Переводим в целые секунды
+    total_seconds = int(ms // 1000)
     
-    # Возвращаем строку с ведущими нулями (02d означает минимум 2 цифры)
+    # divmod(a, b) возвращает сразу два числа: (a // b, a % b)
+    # Считаем часы, минуты и секунды
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    # Если видео длится больше часа, добавляем часы в строку
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    # В обычном случае возвращаем привычные MM:SS
     return f"{minutes:02d}:{seconds:02d}"
 
 def ensure_dir(file_path):
     """
-    Проверяет существование директории для указанного файла и создает её, если нужно.
-    Это предотвращает ошибки при попытке записи логов или результатов в несуществующие папки.
-    
-    Аргументы:
-        file_path: полный путь к файлу (например, "outputs/timestamps/result.txt").
+    Создает дерево папок для указанного пути, если оно еще не существует.
     """
-   
+    if not file_path:
+        return
+
     directory = os.path.dirname(file_path)
     
-    # Если путь содержит папку и она еще не создана — создаем её
-    if directory and not os.path.exists(directory):
-        # makedirs создает всю цепочку папок (например, и outputs, и внутри неё timestamps)
-        os.makedirs(directory)
+    if directory:
+        # exist_ok=True заменяет проверку "if не существует". 
+        # Если папка уже есть, Python просто промолчит и не выдаст ошибку.
+        os.makedirs(directory, exist_ok=True)
