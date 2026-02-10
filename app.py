@@ -186,23 +186,37 @@ if start_btn:
             st.session_state['found_timestamps'] = []
             
             while cap.isOpened():
+                # ПРЕДОХРАНИТЕЛЬ: Если текущее время анализа превысило общую длительность видео,
+                # принудительно останавливаем цикл. Это исправляет баг "бесконечного анализа".
+                if duration > 0 and current_ms > duration:
+                    break
+
                 cap.set(cv2.CAP_PROP_POS_MSEC, current_ms)
                 ret, frame = cap.read()
-                if not ret: break
+                
+                # Если кадр не прочитан (реальный конец файла) — выходим
+                if not ret: 
+                    break
                 
                 time_str = format_time(current_ms)
-                status_ai.text(f"🔍 Анализ: {time_str}")
+                status_ai.text(f"🔍 Анализ нейросетью: {time_str}")
                 
+                # Поиск людей и распознавание номеров
                 matches = detector.detect_and_ocr(frame, matcher)
                 brain.process_frame(matches, time_str)
                 
+                # Обновление списка результатов (живой вывод)
                 st.session_state['found_timestamps'] = brain.results.copy()
                 with live_list_placeholder.container():
                     for res in brain.results:
                         st.write(f"🔍 {res['time']} — {res['name']}")
                 
+                # Обновление полоски прогресса
                 if duration > 0:
+                    # min(..., 1.0) гарантирует, что полоска не уйдет за 100%
                     p_bar_ai.progress(min(current_ms / duration, 1.0))
+                
+                # Переходим к следующему кадру согласно заданному интервалу
                 current_ms += (interval * 1000)
             
             cap.release()

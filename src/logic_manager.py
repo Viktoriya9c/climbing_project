@@ -3,7 +3,7 @@ class TimeLogicManager:
     Класс управления логикой подтверждения атлетов.
     Фильтрует шум OCR и позволяет фиксировать повторные выступления через таймаут.
     """
-    def __init__(self, conf_limit=3, session_timeout_sec=240):
+    def __init__(self, conf_limit=3, session_timeout_sec=360):
         # Порог кадров для подтверждения номера
         self.conf_limit = conf_limit
         
@@ -41,7 +41,7 @@ class TimeLogicManager:
         to_delete_candidates = []
         for num, data in self.candidates.items():
             # data[3] — это секунда, когда мы видели этот номер в последний раз
-            if current_sec - data[3] > 30: 
+            if current_sec - data[3] > 60: 
                 to_delete_candidates.append(num)
         
         for num in to_delete_candidates:
