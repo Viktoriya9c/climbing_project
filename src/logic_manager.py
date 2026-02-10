@@ -1,31 +1,33 @@
-from src.video_utils import format_time # Понадобится для расчетов, если будем переводить в секунды
-
 class TimeLogicManager:
     """
     Класс управления логикой подтверждения атлетов.
     Фильтрует шум OCR и позволяет фиксировать повторные выступления через таймаут.
     """
-    def __init__(self, conf_limit=3, session_timeout_sec=300):
+    def __init__(self, conf_limit=3, session_timeout_sec=240):
         # Порог кадров для подтверждения номера
         self.conf_limit = conf_limit
         
-        # Таймаут (в секундах), через который атлет может быть зафиксирован повторно
-        # 300 секунд = 5 минут
+        # Таймаут: 240 секунд = 4 минуты (как ты и просила)
         self.session_timeout_sec = session_timeout_sec
         
         # Словарь подтвержденных атлетов: {номер: последние_секунды_появления}
         self.last_confirmed_time = {} 
         
-        # Словарь кандидатов: {номер: [счетчик, время_первого_появления_строкой, ФИО, секунды]}
+        # Словарь кандидатов: {номер: [счетчик, время_строкой, ФИО, секунды_последнего_визита]}
         self.candidates = {} 
         
         # Финальный список результатов
         self.results = []     
 
     def _time_to_seconds(self, time_str):
-        """Вспомогательная функция для перевода MM:SS в секунды"""
-        m, s = map(int, time_str.split(':'))
-        return m * 60 + s
+        """Улучшенная функция перевода времени в секунды (понимает MM:SS и HH:MM:SS)"""
+        try:
+            parts = list(map(int, time_str.split(':')))
+            if len(parts) == 3: # HH:MM:SS
+                return parts[0] * 3600 + parts[1] * 60 + parts[2]
+            return parts[0] * 60 + parts[1] # MM:SS
+        except:
+            return 0
 
     def process_frame(self, matched_list, current_time_str):
         """
@@ -33,42 +35,45 @@ class TimeLogicManager:
         """
         current_sec = self._time_to_seconds(current_time_str)
 
+        # --- 1. ЗАЩИТА ОТ ФАНТОМОВ ---
+        # Если кандидат не появлялся в кадре более 30 секунд, мы его удаляем.
+        # Это не дает случайным ошибкам (шуму) накопиться за длинную трансляцию.
+        to_delete_candidates = []
+        for num, data in self.candidates.items():
+            # data[3] — это секунда, когда мы видели этот номер в последний раз
+            if current_sec - data[3] > 30: 
+                to_delete_candidates.append(num)
+        
+        for num in to_delete_candidates:
+            del self.candidates[num]
+
+        # --- 2. ОБРАБОТКА ТЕКУЩИХ НАХОДОК ---
         for num, name in matched_list:
             
-            # 1. ПРОВЕРКА ТАЙМАУТА (Повторное появление)
+            # Проверка таймаута (4 минуты)
             if num in self.last_confirmed_time:
                 time_passed = current_sec - self.last_confirmed_time[num]
-                
-                # Если с последнего подтверждения прошло меньше 5 минут — игнорируем
                 if time_passed < self.session_timeout_sec:
                     continue
-                # Если прошло больше 5 минут — значит, это новый старт, работаем дальше
             
-            # 2. ЛОГИКА ПОДТВЕРЖДЕНИЯ (Кандидаты)
             if num not in self.candidates:
-                # Номер увидели впервые (или впервые после таймаута)
-                self.candidates[num] = [1, current_time_str, name]
+                # Впервые увидели: [счетчик=1, время_строкой, имя, секунды_сейчас]
+                self.candidates[num] = [1, current_time_str, name, current_sec]
             else:
-                # Номер уже в кандидатах — наращиваем счетчик
+                # Уже был в кандидатах: наращиваем счетчик и обновляем время "последнего визита"
                 self.candidates[num][0] += 1
+                self.candidates[num][3] = current_sec 
                 
-                # Если набрали достаточно кадров (conf_limit)
+                # Если набрали достаточно кадров для подтверждения
                 if self.candidates[num][0] >= self.conf_limit:
                     first_seen_str = self.candidates[num][1] 
                     
-                    # Фиксируем результат
                     self.results.append({
                         "time": first_seen_str, 
                         "num": num, 
                         "name": name
                     })
                     
-                    # Запоминаем время последнего подтверждения для этого номера
+                    # Запоминаем время успеха и удаляем из кандидатов
                     self.last_confirmed_time[num] = current_sec
-                    
-                    # Очищаем из кандидатов, чтобы начать новый отсчет только через 5 минут
                     del self.candidates[num]
-                    
-                    # (Для отладки в консоли оставляем чистый вывод)
-                    # print(f"✨ ПОДТВЕРЖДЕНО: {first_seen_str} | №{num} {name}")
-                    
