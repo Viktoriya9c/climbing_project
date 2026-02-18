@@ -1,0 +1,807 @@
+const appShell = document.getElementById("appShell");
+const sidebar = document.getElementById("sidebar");
+const rightPanel = document.getElementById("rightPanel");
+const leftEdgeZone = document.getElementById("leftEdgeZone");
+const rightEdgeZone = document.getElementById("rightEdgeZone");
+
+const fileInput = document.getElementById("fileInput");
+const csvInput = document.getElementById("csvInput");
+const csvStatus = document.getElementById("csvStatus");
+const uploadStatus = document.getElementById("uploadStatus");
+const uploadProgress = document.getElementById("uploadProgress");
+const urlInput = document.getElementById("urlInput");
+const downloadBtn = document.getElementById("downloadBtn");
+
+const statusText = document.getElementById("statusText");
+const statusDescription = document.getElementById("statusDescription");
+const spinnerWrap = document.getElementById("spinnerWrap");
+
+const startBtn = document.getElementById("startBtn");
+const cancelBtn = document.getElementById("cancelBtn");
+const resetStateBtn = document.getElementById("resetStateBtn");
+
+const pinSidebarBtn = document.getElementById("pinSidebarBtn");
+const pinRightPanelBtn = document.getElementById("pinRightPanelBtn");
+const closeSidebarBtn = document.getElementById("closeSidebarBtn");
+const closeRightPanelBtn = document.getElementById("closeRightPanelBtn");
+
+const videoPlayer = document.getElementById("videoPlayer");
+const overlayCanvas = document.getElementById("overlayCanvas");
+const videoError = document.getElementById("videoError");
+
+const segmentsList = document.getElementById("segmentsList");
+const segmentSearch = document.getElementById("segmentSearch");
+const clearFilterBtn = document.getElementById("clearFilterBtn");
+
+const resultsText = document.getElementById("resultsText");
+const downloadTxtBtn = document.getElementById("downloadTxtBtn");
+
+const eventLogBox = document.getElementById("eventLogBox");
+const stateLogBox = document.getElementById("stateLogBox");
+const eventsDetails = document.getElementById("eventsDetails");
+const stateDetails = document.getElementById("stateDetails");
+const copyEventsBtn = document.getElementById("copyEventsBtn");
+
+let latestState = null;
+let saveTextTimer = null;
+let saveUiTimer = null;
+let savePlaybackTimer = null;
+let hasVideoLoadError = false;
+let isApplyingUi = false;
+let userExplicitlyUnmuted = false;
+let currentMediaKey = null;
+let pendingSeekSeconds = null;
+let logsSelectionLocked = false;
+
+const ACTIVE_PHASES = new Set(["uploading", "downloading", "converting", "processing"]);
+const UI_CACHE_KEY = "video_app_v5_ui";
+
+function normalizePhase(phase) {
+    return String(phase || "idle").trim().toLowerCase();
+}
+
+function describePhase(phase) {
+    const map = {
+        idle: "Система готова.",
+        uploading: "Загрузка файла в локальное хранилище.",
+        downloading: "Скачивание видео по URL.",
+        uploaded: "Файл загружен, можно запускать анализ.",
+        downloaded: "Видео скачано, можно запускать анализ.",
+        converting: "Видео конвертируется в web-формат.",
+        converted: "Конвертация завершена.",
+        processing: "Идёт анализ видео.",
+        done: "Обработка завершена.",
+        error: "Ошибка в процессе. Проверьте лог событий."
+    };
+    return map[phase] || "Состояние обновлено.";
+}
+
+function setProgress(percent) {
+    const safe = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+    uploadProgress.style.width = `${safe}%`;
+    uploadProgress.innerText = `${safe}%`;
+}
+
+function getUIPrefs(state) {
+    const ui = state?.ui || {};
+    return {
+        sidebar_hidden: Boolean(ui.sidebar_hidden),
+        right_panel_collapsed: Boolean(ui.right_panel_collapsed),
+        sidebar_pinned: Boolean(ui.sidebar_pinned),
+        right_panel_pinned: Boolean(ui.right_panel_pinned),
+        events_open: ui.events_open !== false,
+        state_open: Boolean(ui.state_open)
+    };
+}
+
+function readCachedUIPrefs() {
+    try {
+        const raw = localStorage.getItem(UI_CACHE_KEY);
+        if (!raw) {
+            return null;
+        }
+        const parsed = JSON.parse(raw);
+        return getUIPrefs({ ui: parsed });
+    } catch {
+        return null;
+    }
+}
+
+function writeCachedUIPrefs(ui) {
+    try {
+        localStorage.setItem(UI_CACHE_KEY, JSON.stringify(ui));
+    } catch {
+        // ignore storage errors
+    }
+}
+
+function setSidebarHoverOpen(open) {
+    appShell.classList.toggle("sidebar-hover-open", open);
+}
+
+function setRightHoverOpen(open) {
+    appShell.classList.toggle("right-hover-open", open);
+}
+
+function applyUIPrefs(ui) {
+    isApplyingUi = true;
+    appShell.classList.toggle("sidebar-hidden", ui.sidebar_hidden);
+    appShell.classList.toggle("right-hidden", ui.right_panel_collapsed);
+    appShell.classList.toggle("sidebar-pinned", ui.sidebar_pinned);
+    appShell.classList.toggle("right-pinned", ui.right_panel_pinned);
+    pinSidebarBtn.classList.toggle("btn-secondary", ui.sidebar_pinned);
+    pinSidebarBtn.classList.toggle("btn-outline-secondary", !ui.sidebar_pinned);
+    pinRightPanelBtn.classList.toggle("btn-secondary", ui.right_panel_pinned);
+    pinRightPanelBtn.classList.toggle("btn-outline-secondary", !ui.right_panel_pinned);
+    pinSidebarBtn.title = ui.sidebar_pinned ? "Открепить панель" : "Закрепить панель";
+    pinRightPanelBtn.title = ui.right_panel_pinned ? "Открепить панель" : "Закрепить панель";
+
+    if (eventsDetails.open !== ui.events_open) {
+        eventsDetails.open = ui.events_open;
+    }
+    if (stateDetails.open !== ui.state_open) {
+        stateDetails.open = ui.state_open;
+    }
+    writeCachedUIPrefs(ui);
+    appShell.classList.remove("ui-booting");
+    isApplyingUi = false;
+}
+
+async function persistUiPatch(partial) {
+    if (!latestState) {
+        return;
+    }
+
+    const merged = { ...getUIPrefs(latestState), ...partial };
+    latestState.ui = merged;
+    applyUIPrefs(merged);
+
+    if (saveUiTimer) {
+        clearTimeout(saveUiTimer);
+    }
+
+    saveUiTimer = setTimeout(async () => {
+        try {
+            await callJson("/state", { ui: merged });
+        } catch {
+            // Backend event log will capture request failures.
+        }
+    }, 250);
+}
+
+function updateControls(state) {
+    const phase = normalizePhase(state.phase);
+    const processing = Boolean(state.processing);
+    const hasVideo = Boolean(state.video);
+    const hasProtocol = Boolean(state.protocol_csv);
+    const canStart = hasVideo && hasProtocol && (phase === "uploaded" || phase === "downloaded" || phase === "done" || phase === "converted");
+    const canCancel = ACTIVE_PHASES.has(phase) && processing;
+    const operationActive = ACTIVE_PHASES.has(phase) && processing;
+
+    startBtn.disabled = !canStart;
+    cancelBtn.disabled = !canCancel;
+    downloadBtn.disabled = operationActive;
+    fileInput.disabled = operationActive;
+    resetStateBtn.disabled = operationActive;
+
+    statusText.innerText = `Фаза: ${phase}`;
+    statusDescription.innerText = describePhase(phase);
+    spinnerWrap.classList.toggle("d-none", !operationActive);
+
+    if (state.video) {
+        uploadStatus.innerText = `Текущее видео: ${state.video}`;
+    }
+    csvStatus.innerText = state.protocol_csv ? `CSV: ${state.protocol_csv}` : "CSV не загружен";
+}
+
+function getCurrentUI() {
+    return getUIPrefs(latestState || {});
+}
+
+function getMediaKey(state) {
+    if (state.converted) {
+        return `converted:${state.converted}`;
+    }
+    if (state.video) {
+        return `video:${state.video}`;
+    }
+    return null;
+}
+
+function syncVideoSource(state) {
+    const converted = state.converted;
+    const primary = converted ? `/converted/${encodeURIComponent(converted)}` : null;
+    const fallback = state.video ? `/video/${encodeURIComponent(state.video)}` : null;
+    const nextSource = primary || fallback;
+    const nextKey = getMediaKey(state);
+
+    if (!nextSource) {
+        videoPlayer.removeAttribute("src");
+        videoPlayer.load();
+        currentMediaKey = null;
+        pendingSeekSeconds = null;
+        return;
+    }
+
+    const currentSrc = videoPlayer.getAttribute("src") || "";
+    if (!currentSrc.endsWith(nextSource)) {
+        hasVideoLoadError = false;
+        videoError.hidden = true;
+        videoError.innerText = "";
+        videoPlayer.setAttribute("src", nextSource);
+        if (!userExplicitlyUnmuted) {
+            videoPlayer.muted = true;
+        }
+        videoPlayer.load();
+
+        currentMediaKey = nextKey;
+        const playback = state.playback || {};
+        if (playback.source === nextKey && Number.isFinite(playback.position) && playback.position > 0) {
+            pendingSeekSeconds = playback.position;
+        } else {
+            pendingSeekSeconds = null;
+        }
+    }
+
+    if (hasVideoLoadError && primary && fallback && !currentSrc.endsWith(fallback)) {
+        hasVideoLoadError = false;
+        videoError.hidden = true;
+        videoPlayer.setAttribute("src", fallback);
+        if (!userExplicitlyUnmuted) {
+            videoPlayer.muted = true;
+        }
+        videoPlayer.load();
+        currentMediaKey = state.video ? `video:${state.video}` : currentMediaKey;
+    }
+}
+
+function toTimeLabel(seconds) {
+    const s = Number(seconds);
+    if (!Number.isFinite(s) || s < 0) {
+        return "00:00";
+    }
+    const mm = Math.floor(s / 60).toString().padStart(2, "0");
+    const ss = Math.floor(s % 60).toString().padStart(2, "0");
+    return `${mm}:${ss}`;
+}
+
+function renderSegments(state) {
+    const term = (segmentSearch.value || "").trim().toLowerCase();
+    const timestamps = Array.isArray(state.timestamps) ? state.timestamps : [];
+
+    const items = timestamps
+        .slice()
+        .sort((a, b) => (a?.time || 0) - (b?.time || 0))
+        .filter((item) => {
+            if (!term) {
+                return true;
+            }
+            const text = `${item?.label || ""} ${toTimeLabel(item?.time)}`.toLowerCase();
+            return text.includes(term);
+        });
+
+    segmentsList.innerHTML = "";
+
+    if (!items.length) {
+        const empty = document.createElement("li");
+        empty.className = "list-group-item text-body-secondary";
+        empty.innerText = "Сегменты пока отсутствуют";
+        segmentsList.appendChild(empty);
+        return;
+    }
+
+    for (const item of items) {
+        const li = document.createElement("li");
+        li.className = "list-group-item d-flex justify-content-between align-items-center segment-item";
+        li.innerHTML = `<span>${item.label || "Событие"}</span><span class="badge text-bg-light">${toTimeLabel(item.time)}</span>`;
+        li.addEventListener("click", () => {
+            if (Number.isFinite(item.time)) {
+                videoPlayer.currentTime = item.time;
+                void videoPlayer.play().catch(() => {});
+            }
+        });
+        segmentsList.appendChild(li);
+    }
+}
+
+function drawOverlay(state) {
+    const bboxes = Array.isArray(state.bboxes) ? state.bboxes : [];
+    const rect = videoPlayer.getBoundingClientRect();
+
+    overlayCanvas.width = Math.max(1, Math.floor(rect.width));
+    overlayCanvas.height = Math.max(1, Math.floor(rect.height));
+
+    const ctx = overlayCanvas.getContext("2d");
+    if (!ctx) {
+        return;
+    }
+
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    ctx.strokeStyle = "#13d878";
+    ctx.fillStyle = "rgba(19, 216, 120, 0.15)";
+    ctx.lineWidth = 2;
+    ctx.font = "12px sans-serif";
+
+    for (const box of bboxes) {
+        if (![box?.x, box?.y, box?.w, box?.h].every(Number.isFinite)) {
+            continue;
+        }
+        const x = box.x * overlayCanvas.width;
+        const y = box.y * overlayCanvas.height;
+        const w = box.w * overlayCanvas.width;
+        const h = box.h * overlayCanvas.height;
+
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+
+        if (box.label) {
+            ctx.fillStyle = "#13d878";
+            ctx.fillText(String(box.label), x + 4, y + 14);
+            ctx.fillStyle = "rgba(19, 216, 120, 0.15)";
+        }
+    }
+}
+
+function renderEventLog(state) {
+    if (logsSelectionLocked) {
+        return;
+    }
+
+    const events = Array.isArray(state.events) ? state.events : [];
+    if (!events.length) {
+        eventLogBox.innerText = "Журнал событий пуст";
+    } else {
+        const lines = events.slice(-120).map((item) => {
+            const ts = String(item.ts || "").replace("T", " ").replace("+00:00", "Z");
+            const type = (item.type || "event").toUpperCase();
+            const level = (item.level || "info").toUpperCase();
+            const msg = item.message || "";
+            return `[${ts}] [${type}] [${level}] ${msg}`;
+        });
+
+        eventLogBox.innerText = lines.join("\n");
+        eventLogBox.scrollTop = eventLogBox.scrollHeight;
+    }
+
+    const { events: _events, ...stateWithoutEvents } = state;
+    stateLogBox.innerText = JSON.stringify(stateWithoutEvents, null, 2);
+}
+
+function renderState(state) {
+    latestState = state;
+    setProgress(state.progress);
+    updateControls(state);
+    applyUIPrefs(getUIPrefs(state));
+    syncVideoSource(state);
+    renderSegments(state);
+    drawOverlay(state);
+    renderEventLog(state);
+
+    if (typeof state.results_text === "string" && document.activeElement !== resultsText) {
+        resultsText.value = state.results_text;
+    }
+}
+
+async function fetchState() {
+    const res = await fetch("/state");
+    if (!res.ok) {
+        throw new Error(`State request failed: ${res.status}`);
+    }
+    return res.json();
+}
+
+async function loadState() {
+    try {
+        const state = await fetchState();
+        renderState(state);
+    } catch {
+        uploadStatus.innerText = "Не удалось загрузить состояние";
+    }
+}
+
+async function callJson(url, payload = null) {
+    const init = payload
+        ? {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        }
+        : { method: "POST" };
+
+    const res = await fetch(url, init);
+    if (!res.ok) {
+        let error = "request failed";
+        try {
+            const data = await res.json();
+            error = data.error || error;
+        } catch {}
+        throw new Error(error);
+    }
+    return res.json();
+}
+
+function queueSavePlayback(force = false) {
+    if (!currentMediaKey || !Number.isFinite(videoPlayer.currentTime)) {
+        return;
+    }
+
+    const payload = {
+        playback: {
+            source: currentMediaKey,
+            position: Number(videoPlayer.currentTime.toFixed(2))
+        }
+    };
+
+    if (force) {
+        void callJson("/state", payload).catch(() => {});
+        return;
+    }
+
+    if (savePlaybackTimer) {
+        return;
+    }
+
+    savePlaybackTimer = setTimeout(async () => {
+        savePlaybackTimer = null;
+        try {
+            await callJson("/state", payload);
+        } catch {
+            // ignore transient failures
+        }
+    }, 1000);
+}
+
+fileInput.addEventListener("change", function () {
+    const file = this.files[0];
+    if (!file) {
+        return;
+    }
+
+    uploadStatus.innerText = "Uploading...";
+    setProgress(0);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/upload", true);
+
+    xhr.upload.onprogress = function (event) {
+        if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            setProgress(percent);
+        }
+    };
+
+    xhr.onload = function () {
+        if (xhr.status === 200) {
+            uploadStatus.innerText = "Upload complete";
+            void loadState();
+        } else if (xhr.status === 413) {
+            uploadStatus.innerText = "Файл превышает 2GB";
+        } else {
+            uploadStatus.innerText = "Upload failed";
+        }
+    };
+
+    xhr.onerror = function () {
+        uploadStatus.innerText = "Upload failed";
+    };
+
+    xhr.send(formData);
+});
+
+csvInput.addEventListener("change", function () {
+    const file = this.files[0];
+    if (!file) {
+        return;
+    }
+
+    csvStatus.innerText = "Uploading CSV...";
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/protocol/upload", true);
+    xhr.onload = function () {
+        if (xhr.status === 200) {
+            csvStatus.innerText = `CSV: ${file.name}`;
+            void loadState();
+        } else {
+            csvStatus.innerText = "Ошибка загрузки CSV";
+        }
+    };
+    xhr.onerror = function () {
+        csvStatus.innerText = "Ошибка загрузки CSV";
+    };
+    xhr.send(formData);
+});
+
+downloadBtn.addEventListener("click", async function () {
+    const url = urlInput.value.trim();
+    if (!url) {
+        uploadStatus.innerText = "Введите URL";
+        return;
+    }
+
+    uploadStatus.innerText = "Download queued";
+
+    try {
+        await callJson("/download", { url });
+    } catch (err) {
+        uploadStatus.innerText = `Download failed: ${err.message}`;
+    }
+
+    void loadState();
+});
+
+startBtn.addEventListener("click", async () => {
+    uploadStatus.innerText = "Processing queued";
+    try {
+        await callJson("/process/start");
+    } catch (err) {
+        uploadStatus.innerText = `Start failed: ${err.message}`;
+    }
+    void loadState();
+});
+
+cancelBtn.addEventListener("click", async () => {
+    try {
+        await callJson("/process/cancel");
+        uploadStatus.innerText = "Cancel requested";
+    } catch (err) {
+        uploadStatus.innerText = `Cancel failed: ${err.message}`;
+    }
+    void loadState();
+});
+
+resetStateBtn.addEventListener("click", async () => {
+    try {
+        await callJson("/state/reset", { clear_events: false });
+        uploadStatus.innerText = "State reset";
+        videoError.hidden = true;
+        videoError.innerText = "";
+        hasVideoLoadError = false;
+    } catch (err) {
+        uploadStatus.innerText = `Reset failed: ${err.message}`;
+    }
+    void loadState();
+});
+
+closeSidebarBtn.addEventListener("click", () => {
+    void persistUiPatch({ sidebar_hidden: true });
+    setSidebarHoverOpen(false);
+});
+
+closeRightPanelBtn.addEventListener("click", () => {
+    void persistUiPatch({ right_panel_collapsed: true });
+    setRightHoverOpen(false);
+});
+
+pinSidebarBtn.addEventListener("click", () => {
+    const current = getUIPrefs(latestState || {});
+    void persistUiPatch({
+        sidebar_pinned: !current.sidebar_pinned,
+        sidebar_hidden: false,
+    });
+});
+
+pinRightPanelBtn.addEventListener("click", () => {
+    const current = getUIPrefs(latestState || {});
+    void persistUiPatch({
+        right_panel_pinned: !current.right_panel_pinned,
+        right_panel_collapsed: false,
+    });
+});
+
+eventsDetails.addEventListener("toggle", () => {
+    if (isApplyingUi) {
+        return;
+    }
+    const current = getUIPrefs(latestState || {});
+    if (current.events_open !== eventsDetails.open) {
+        void persistUiPatch({ events_open: eventsDetails.open });
+    }
+});
+
+stateDetails.addEventListener("toggle", () => {
+    if (isApplyingUi) {
+        return;
+    }
+    const current = getUIPrefs(latestState || {});
+    if (current.state_open !== stateDetails.open) {
+        void persistUiPatch({ state_open: stateDetails.open });
+    }
+});
+
+segmentSearch.addEventListener("input", () => {
+    if (latestState) {
+        renderSegments(latestState);
+    }
+});
+
+clearFilterBtn.addEventListener("click", () => {
+    segmentSearch.value = "";
+    if (latestState) {
+        renderSegments(latestState);
+    }
+});
+
+copyEventsBtn.addEventListener("click", async (event) => {
+    event.preventDefault();
+    try {
+        await navigator.clipboard.writeText(eventLogBox.innerText || "");
+    } catch {
+        // clipboard can be blocked by browser policy
+    }
+});
+
+downloadTxtBtn.addEventListener("click", () => {
+    const blob = new Blob([resultsText.value || ""], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "results.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+});
+
+resultsText.addEventListener("input", () => {
+    if (saveTextTimer) {
+        clearTimeout(saveTextTimer);
+    }
+    saveTextTimer = setTimeout(async () => {
+        try {
+            await callJson("/state", { results_text: resultsText.value });
+        } catch {
+            // Backend event log will show failure.
+        }
+    }, 500);
+});
+
+videoPlayer.addEventListener("error", () => {
+    hasVideoLoadError = true;
+    videoError.hidden = false;
+    videoError.innerText = "Видео не удалось загрузить. Проверьте URL/формат в логе событий.";
+});
+
+videoPlayer.addEventListener("loadeddata", () => {
+    hasVideoLoadError = false;
+    videoError.hidden = true;
+    videoError.innerText = "";
+    if (!userExplicitlyUnmuted) {
+        videoPlayer.muted = true;
+    }
+});
+
+videoPlayer.addEventListener("loadedmetadata", () => {
+    if (pendingSeekSeconds == null) {
+        return;
+    }
+    const max = Number.isFinite(videoPlayer.duration) ? Math.max(0, videoPlayer.duration - 0.2) : pendingSeekSeconds;
+    videoPlayer.currentTime = Math.min(pendingSeekSeconds, max);
+    pendingSeekSeconds = null;
+});
+
+videoPlayer.addEventListener("volumechange", () => {
+    if (!videoPlayer.muted) {
+        userExplicitlyUnmuted = true;
+    }
+});
+
+for (const el of [eventLogBox, stateLogBox]) {
+    el.addEventListener("mousedown", () => {
+        logsSelectionLocked = true;
+    });
+    el.addEventListener("mouseup", () => {
+        setTimeout(() => {
+            const selection = window.getSelection();
+            logsSelectionLocked = Boolean(selection && !selection.isCollapsed);
+        }, 0);
+    });
+    el.addEventListener("mouseleave", () => {
+        const selection = window.getSelection();
+        logsSelectionLocked = Boolean(selection && !selection.isCollapsed);
+    });
+}
+
+setInterval(() => {
+    void loadState();
+}, 1500);
+
+window.addEventListener("resize", () => {
+    if (latestState) {
+        drawOverlay(latestState);
+    }
+});
+
+leftEdgeZone.addEventListener("mouseenter", () => {
+    const ui = getCurrentUI();
+    if (ui.sidebar_hidden) {
+        setSidebarHoverOpen(true);
+    }
+});
+
+rightEdgeZone.addEventListener("mouseenter", () => {
+    const ui = getCurrentUI();
+    if (ui.right_panel_collapsed) {
+        setRightHoverOpen(true);
+    }
+});
+
+sidebar.addEventListener("mouseleave", () => {
+    const ui = getCurrentUI();
+    if (!ui.sidebar_pinned && ui.sidebar_hidden) {
+        setSidebarHoverOpen(false);
+    }
+});
+
+rightPanel.addEventListener("mouseleave", () => {
+    const ui = getCurrentUI();
+    if (!ui.right_panel_pinned && ui.right_panel_collapsed) {
+        setRightHoverOpen(false);
+    }
+});
+
+document.addEventListener("mousedown", (event) => {
+    const current = getUIPrefs(latestState || {});
+    const target = event.target;
+    const sidebarVisible = !current.sidebar_hidden || appShell.classList.contains("sidebar-hover-open");
+    const rightVisible = !current.right_panel_collapsed || appShell.classList.contains("right-hover-open");
+
+    if (
+        sidebarVisible &&
+        !current.sidebar_pinned &&
+        sidebar &&
+        target instanceof Node &&
+        !sidebar.contains(target) &&
+        !leftEdgeZone.contains(target)
+    ) {
+        if (current.sidebar_hidden) {
+            setSidebarHoverOpen(false);
+        } else {
+            void persistUiPatch({ sidebar_hidden: true });
+            setSidebarHoverOpen(false);
+        }
+    }
+
+    if (
+        rightVisible &&
+        !current.right_panel_pinned &&
+        rightPanel &&
+        target instanceof Node &&
+        !rightPanel.contains(target) &&
+        !rightEdgeZone.contains(target)
+    ) {
+        if (current.right_panel_collapsed) {
+            setRightHoverOpen(false);
+        } else {
+            void persistUiPatch({ right_panel_collapsed: true });
+            setRightHoverOpen(false);
+        }
+    }
+});
+
+videoPlayer.addEventListener("timeupdate", () => {
+    if (latestState) {
+        drawOverlay(latestState);
+    }
+    queueSavePlayback(false);
+});
+
+videoPlayer.addEventListener("pause", () => {
+    queueSavePlayback(true);
+});
+
+window.addEventListener("beforeunload", () => {
+    queueSavePlayback(true);
+});
+
+const cachedUI = readCachedUIPrefs();
+if (cachedUI) {
+    applyUIPrefs(cachedUI);
+} else {
+    appShell.classList.remove("ui-booting");
+}
+
+void loadState();

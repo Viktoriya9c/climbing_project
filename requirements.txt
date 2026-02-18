@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+jinja2
+python-multipart
+requests
+pytest
+httpx
+yt-dlp
+opencv-python-headless
+ultralytics
+easyocr

@@ -1,27 +1,39 @@
-# Виртуальное окружение
-venv/
-.venv/
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
 
-# Нейросети (они скачаются сами)
-*.pt
-*.onnx
-
-# Видео и тяжелые данные (входные)
-input/videos/
-input/images/
-
-# Результаты (выходные)
-outputs/
-logs/
-
-# Временные файлы Python
+# Python
 __pycache__/
-*.pyc
-*.mp4
-*.csv
+*.py[cod]
+*.so
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-temp_data/
+# Virtual environments
+.venv/
+venv/
+env/
 
-# Секретные файлы
-cookies.txt
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Runtime app data
+uploads/
+input/
+converted/
+state.json
+*.log
+models/*.pt
+
+# Local env
 .env
+.env.*
+/yolov8n.pt

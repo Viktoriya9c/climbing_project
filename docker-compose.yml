@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: video-app-v5
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./converted:/app/converted
+      - ./input:/app/input
+      - ./models:/app/models
+      - ./state.json:/app/state.json
+    restart: unless-stopped
