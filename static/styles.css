@@ -1,0 +1,184 @@
+:root {
+    --app-bg: #f3f6fb;
+    --side-bg: #ffffff;
+    --panel-bg: #ffffff;
+    --panel-border: #dce3ee;
+    --log-bg: #0d1117;
+    --log-text: #b7c7e2;
+}
+
+body {
+    margin: 0;
+    background: radial-gradient(circle at top right, #dce9ff 0%, var(--app-bg) 45%);
+}
+
+.app-shell {
+    min-height: 100vh;
+    position: relative;
+}
+
+.app-shell.ui-booting {
+    visibility: hidden;
+}
+
+.edge-zone {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    z-index: 1050;
+    background: transparent;
+}
+
+.edge-zone-left {
+    left: 0;
+}
+
+.edge-zone-right {
+    right: 0;
+}
+
+.sidebar {
+    background: var(--side-bg);
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    width: 320px;
+    overflow: auto;
+    z-index: 1040;
+    transition: transform 0.2s ease;
+    box-shadow: 0 0 24px rgba(15, 23, 42, 0.12);
+}
+
+.app-shell.sidebar-hidden .sidebar {
+    transform: translateX(-100%);
+    pointer-events: none;
+}
+
+.app-shell.sidebar-hidden.sidebar-hover-open .sidebar {
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.workspace {
+    min-width: 0;
+    max-width: 1400px;
+    margin: 0 auto;
+    transition: margin 0.2s ease;
+}
+
+.app-shell.sidebar-pinned:not(.sidebar-hidden) .workspace {
+    margin-left: 320px;
+}
+
+.app-shell.right-pinned:not(.right-hidden) .workspace {
+    margin-right: 360px;
+}
+
+.panel-grid {
+    display: grid;
+    grid-template-columns: minmax(320px, 2fr) minmax(280px, 1fr);
+    gap: 16px;
+}
+
+.panel,
+.card {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+}
+
+.video-shell {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0d1117;
+}
+
+#videoPlayer,
+#overlayCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+
+#overlayCanvas {
+    pointer-events: none;
+}
+
+.segments-list {
+    max-height: 420px;
+    overflow: auto;
+}
+
+.segment-item {
+    cursor: pointer;
+}
+
+.right-panel {
+    background: var(--side-bg);
+    position: fixed;
+    right: 0;
+    top: 0;
+    height: 100vh;
+    width: 360px;
+    overflow: auto;
+    z-index: 1040;
+    transition: transform 0.2s ease;
+    box-shadow: 0 0 24px rgba(15, 23, 42, 0.12);
+}
+
+.app-shell.right-hidden .right-panel {
+    transform: translateX(100%);
+    pointer-events: none;
+}
+
+.app-shell.right-hidden.right-hover-open .right-panel {
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.state-box {
+    height: 220px;
+    overflow: auto;
+    border-radius: 10px;
+    background: var(--log-bg);
+    color: var(--log-text);
+    padding: 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+details > summary {
+    cursor: pointer;
+    user-select: none;
+}
+
+@media (max-width: 1100px) {
+    .sidebar {
+        width: min(92vw, 360px);
+    }
+
+    .workspace,
+    .app-shell:not(.sidebar-hidden) .workspace,
+    .app-shell:not(.right-hidden) .workspace {
+        margin-left: 0;
+        margin-right: 0;
+    }
+
+    .right-panel {
+        width: min(92vw, 400px);
+    }
+
+    .panel-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .segments-list {
+        max-height: 260px;
+    }
+}
