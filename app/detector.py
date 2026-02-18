@@ -7,11 +7,11 @@ class ClimbingDetector:
     """Класс для компьютерного зрения: детекция людей и распознавание номеров."""
     
     def __init__(self, model_filename='yolov8n.pt'):
-        # 1. Вычисляем путь к папке models относительно этого файла (src/detector.py)
+        # 1. Вычисляем путь к папке models относительно этого файла (app/detector.py)
         # __file__ - это путь к текущему файлу
         # os.path.abspath - делает его полным (от буквы диска)
         # os.path.dirname - отрезает имя файла, оставляя путь к папке
-        current_dir = os.path.dirname(os.path.abspath(__file__)) # папка src
+        current_dir = os.path.dirname(os.path.abspath(__file__)) # папка app
         project_root = os.path.dirname(current_dir) # корень проекта
         
         model_path = os.path.join(project_root, 'models', model_filename)

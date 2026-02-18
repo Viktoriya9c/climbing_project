@@ -5,11 +5,11 @@ import gc
 import time 
 
 # Импорты твоих модулей
-from src.matcher import ProtocolMatcher
-from src.logic_manager import TimeLogicManager
-from src.detector import ClimbingDetector
-from src.video_utils import format_time, ensure_dir
-from src.downloader import download_video 
+from app.matcher import ProtocolMatcher
+from app.logic_manager import TimeLogicManager
+from app.detector import ClimbingDetector
+from app.video_utils import format_time, ensure_dir
+from app.downloader import download_video
 
 # 1. Загрузка моделей
 @st.cache_resource
