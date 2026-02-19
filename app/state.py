@@ -38,8 +38,8 @@ def _default_state():
         },
         "ui": {
             "sidebar_hidden": False,
-            "right_panel_collapsed": False,
-            "sidebar_pinned": False,
+            "right_panel_collapsed": True,
+            "sidebar_pinned": True,
             "right_panel_pinned": False,
             "events_open": True,
             "state_open": False,

@@ -543,6 +543,61 @@ async def upload_protocol(file: UploadFile = File(...)):
     return {"status": "ok", "filename": file_name}
 
 
+@app.post("/video/clear")
+async def clear_video():
+    if _worker_active():
+        return JSONResponse({"error": "cannot clear during active process"}, status_code=409)
+
+    state = load_state()
+    video_name = state.get("video")
+    converted_name = state.get("converted")
+
+    if video_name:
+        path = (UPLOAD_DIR / video_name).resolve()
+        if path.parent == UPLOAD_DIR.resolve():
+            path.unlink(missing_ok=True)
+
+    if converted_name:
+        path = (CONVERTED_DIR / converted_name).resolve()
+        if path.parent == CONVERTED_DIR.resolve():
+            path.unlink(missing_ok=True)
+
+    update_state({
+        "video": None,
+        "converted": None,
+        "video_bytes": None,
+        "converted_bytes": None,
+        "bboxes": [],
+        "timestamps": [],
+        "results_text": "",
+        "progress": 0,
+        "phase": "idle",
+        "processing": False,
+        "cancel_requested": False,
+        "phase_started_at": None,
+        "playback": {"source": None, "position": 0},
+    })
+    append_event("Video cleared from UI", event_type="event", level="warning")
+    return {"status": "ok"}
+
+
+@app.post("/protocol/clear")
+async def clear_protocol():
+    if _worker_active():
+        return JSONResponse({"error": "cannot clear during active process"}, status_code=409)
+
+    state = load_state()
+    protocol_name = state.get("protocol_csv")
+    if protocol_name:
+        path = (PROTOCOL_DIR / protocol_name).resolve()
+        if path.parent == PROTOCOL_DIR.resolve():
+            path.unlink(missing_ok=True)
+
+    update_state({"protocol_csv": None})
+    append_event("Protocol CSV cleared from UI", event_type="event", level="warning")
+    return {"status": "ok"}
+
+
 def _download_worker(url: str, *, start_time: int | None = None, end_time: int | None = None):
     try:
         update_state({

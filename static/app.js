@@ -5,24 +5,35 @@ const leftEdgeZone = document.getElementById("leftEdgeZone");
 const rightEdgeZone = document.getElementById("rightEdgeZone");
 
 const fileInput = document.getElementById("fileInput");
+const filePickBtn = document.getElementById("filePickBtn");
+const fileNameDisplay = document.getElementById("fileNameDisplay");
+const fileInfoRow = document.getElementById("fileInfoRow");
+const clearFileBtn = document.getElementById("clearFileBtn");
+const videoSourceFile = document.getElementById("videoSourceFile");
+const videoSourceUrl = document.getElementById("videoSourceUrl");
+const fileSourceWrap = document.getElementById("fileSourceWrap");
+const urlSourceWrap = document.getElementById("urlSourceWrap");
 const csvInput = document.getElementById("csvInput");
-const csvStatus = document.getElementById("csvStatus");
+const csvPickBtn = document.getElementById("csvPickBtn");
+const csvNameDisplay = document.getElementById("csvNameDisplay");
+const csvInfoRow = document.getElementById("csvInfoRow");
+const clearCsvBtn = document.getElementById("clearCsvBtn");
 const uploadStatus = document.getElementById("uploadStatus");
 const uploadProgress = document.getElementById("uploadProgress");
+const processStatusWrap = document.getElementById("processStatusWrap");
+const downloadSpinner = document.getElementById("downloadSpinner");
+const processProgressWrap = document.getElementById("processProgressWrap");
 const urlInput = document.getElementById("urlInput");
 const downloadBtn = document.getElementById("downloadBtn");
 const trimToggle = document.getElementById("trimToggle");
 const trimFields = document.getElementById("trimFields");
 const trimStartInput = document.getElementById("trimStartInput");
 const trimEndInput = document.getElementById("trimEndInput");
-const videoInfo = document.getElementById("videoInfo");
 const frameIntervalInput = document.getElementById("frameIntervalInput");
 const confLimitInput = document.getElementById("confLimitInput");
 const sessionTimeoutInput = document.getElementById("sessionTimeoutInput");
 const phantomTimeoutInput = document.getElementById("phantomTimeoutInput");
 
-const statusText = document.getElementById("statusText");
-const statusDescription = document.getElementById("statusDescription");
 const statusMeta = document.getElementById("statusMeta");
 const spinnerWrap = document.getElementById("spinnerWrap");
 
@@ -72,7 +83,7 @@ function normalizePhase(phase) {
 
 function describePhase(phase) {
     const map = {
-        idle: "Система готова.",
+        idle: "",
         uploading: "Загрузка файла в локальное хранилище.",
         downloading: "Скачивание видео по URL.",
         uploaded: "Файл загружен, можно запускать анализ.",
@@ -84,6 +95,16 @@ function describePhase(phase) {
         error: "Ошибка в процессе. Проверьте лог событий."
     };
     return map[phase] || "Состояние обновлено.";
+}
+
+function phaseStatusLabel(phase) {
+    const map = {
+        uploading: "Загрузка файла",
+        downloading: "Скачивание видео",
+        converting: "Конвертация видео",
+        processing: "Анализ видео"
+    };
+    return map[phase] || "";
 }
 
 function setProgress(percent) {
@@ -106,6 +127,11 @@ function formatBytes(bytes) {
     return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function composeVideoLabel(name, bytes) {
+    const size = formatBytes(bytes);
+    return size ? `${name} · ${size}` : name;
+}
+
 function formatDuration(seconds) {
     const total = Math.max(0, Math.floor(seconds));
     const m = Math.floor(total / 60);
@@ -122,6 +148,36 @@ function clampInt(value, fallback, min, max) {
         return fallback;
     }
     return Math.max(min, Math.min(max, num));
+}
+
+function setVideoSource(mode) {
+    const isFile = mode === "file";
+    if (videoSourceFile) {
+        videoSourceFile.checked = isFile;
+    }
+    if (videoSourceUrl) {
+        videoSourceUrl.checked = !isFile;
+    }
+    if (fileSourceWrap && urlSourceWrap) {
+        fileSourceWrap.hidden = !isFile;
+        urlSourceWrap.hidden = isFile;
+    }
+    if (processStatusWrap) {
+        processStatusWrap.hidden = true;
+    }
+    uploadStatus.innerText = "";
+    setProgress(0);
+    syncTrimVisibility();
+}
+
+function resetFileDisplay() {
+    fileNameDisplay.innerText = ".mp4, .mov, .avi";
+    clearFileBtn.hidden = true;
+}
+
+function resetCsvDisplay() {
+    csvNameDisplay.innerText = ".csv";
+    clearCsvBtn.hidden = true;
 }
 
 function readSettingsFromUI() {
@@ -243,35 +299,65 @@ function updateControls(state) {
     const canStart = hasVideo && hasProtocol && (phase === "uploaded" || phase === "downloaded" || phase === "done" || phase === "converted");
     const canCancel = ACTIVE_PHASES.has(phase) && processing;
     const operationActive = ACTIVE_PHASES.has(phase) && processing;
+    const isUrlMode = videoSourceUrl?.checked;
+    const isFileMode = videoSourceFile?.checked;
 
     startBtn.disabled = !canStart;
     cancelBtn.disabled = !canCancel;
-    downloadBtn.disabled = operationActive;
-    fileInput.disabled = operationActive;
+    downloadBtn.disabled = operationActive || !isUrlMode;
+    fileInput.disabled = operationActive || !isFileMode;
+    filePickBtn.disabled = operationActive || !isFileMode;
+    urlInput.disabled = operationActive || !isUrlMode;
+    csvInput.disabled = operationActive;
+    csvPickBtn.disabled = operationActive;
     resetStateBtn.disabled = operationActive;
-    trimToggle.disabled = operationActive || !urlInput.value.trim();
+    trimToggle.disabled = operationActive || !urlInput.value.trim() || !isUrlMode;
+    clearFileBtn.disabled = operationActive;
+    clearCsvBtn.disabled = operationActive;
+    videoSourceFile.disabled = operationActive;
+    videoSourceUrl.disabled = operationActive;
 
-    statusText.innerText = `Фаза: ${phase}`;
-    statusDescription.innerText = describePhase(phase);
     spinnerWrap.classList.toggle("d-none", !operationActive);
+    processStatusWrap.hidden = !operationActive;
+    if (operationActive) {
+        const label = phaseStatusLabel(phase);
+        uploadStatus.innerText = label || describePhase(phase);
+        if (phase === "downloading") {
+            downloadSpinner.hidden = false;
+            processProgressWrap.hidden = true;
+        } else {
+            downloadSpinner.hidden = true;
+            processProgressWrap.hidden = false;
+        }
+    } else if (phase === "error") {
+        processStatusWrap.hidden = false;
+        uploadStatus.innerText = "Ошибка";
+        downloadSpinner.hidden = true;
+        processProgressWrap.hidden = true;
+    } else {
+        uploadStatus.innerText = "";
+        downloadSpinner.hidden = true;
+        processProgressWrap.hidden = true;
+    }
 
     if (state.video) {
-        uploadStatus.innerText = `Текущее видео: ${state.video}`;
+        fileNameDisplay.innerText = composeVideoLabel(state.video, state.video_bytes);
+        clearFileBtn.hidden = false;
+    } else if (fileInput.files && fileInput.files[0]) {
+        fileNameDisplay.innerText = composeVideoLabel(fileInput.files[0].name, fileInput.files[0].size);
+        clearFileBtn.hidden = false;
+    } else {
+        resetFileDisplay();
     }
-    csvStatus.innerText = state.protocol_csv ? `CSV: ${state.protocol_csv}` : "CSV не загружен";
-}
-
-function updateVideoInfo(state) {
-    const parts = [];
-    if (state.video) {
-        const size = formatBytes(state.video_bytes);
-        parts.push(`Видео: ${state.video}${size ? ` (${size})` : ""}`);
+    if (state.protocol_csv) {
+        csvNameDisplay.innerText = state.protocol_csv;
+        clearCsvBtn.hidden = false;
+    } else if (csvInput.files && csvInput.files[0]) {
+        csvNameDisplay.innerText = csvInput.files[0].name;
+        clearCsvBtn.hidden = false;
+    } else {
+        resetCsvDisplay();
     }
-    if (state.converted) {
-        const size = formatBytes(state.converted_bytes);
-        parts.push(`Converted: ${state.converted}${size ? ` (${size})` : ""}`);
-    }
-    videoInfo.innerText = parts.join(" · ");
 }
 
 function updateStatusMeta(state) {
@@ -480,7 +566,6 @@ function renderState(state) {
     updateControls(state);
     applyUIPrefs(getUIPrefs(state));
     applySettingsFromState(state);
-    updateVideoInfo(state);
     updateStatusMeta(state);
     syncVideoSource(state);
     renderSegments(state);
@@ -564,10 +649,14 @@ function queueSavePlayback(force = false) {
 fileInput.addEventListener("change", function () {
     const file = this.files[0];
     if (!file) {
+        resetFileDisplay();
         return;
     }
 
-    uploadStatus.innerText = "Uploading...";
+    fileNameDisplay.innerText = file.name;
+    clearFileBtn.hidden = false;
+    uploadStatus.innerText = "Загрузка...";
+    processStatusWrap.hidden = false;
     setProgress(0);
 
     const formData = new FormData();
@@ -585,17 +674,17 @@ fileInput.addEventListener("change", function () {
 
     xhr.onload = function () {
         if (xhr.status === 200) {
-            uploadStatus.innerText = "Upload complete";
+            uploadStatus.innerText = "Загрузка завершена";
             void loadState();
         } else if (xhr.status === 413) {
             uploadStatus.innerText = "Файл превышает 2GB";
         } else {
-            uploadStatus.innerText = "Upload failed";
+            uploadStatus.innerText = "Ошибка загрузки";
         }
     };
 
     xhr.onerror = function () {
-        uploadStatus.innerText = "Upload failed";
+        uploadStatus.innerText = "Ошибка загрузки";
     };
 
     xhr.send(formData);
@@ -604,10 +693,12 @@ fileInput.addEventListener("change", function () {
 csvInput.addEventListener("change", function () {
     const file = this.files[0];
     if (!file) {
+        resetCsvDisplay();
         return;
     }
 
-    csvStatus.innerText = "Uploading CSV...";
+    csvNameDisplay.innerText = file.name;
+    clearCsvBtn.hidden = false;
     const formData = new FormData();
     formData.append("file", file);
 
@@ -615,16 +706,21 @@ csvInput.addEventListener("change", function () {
     xhr.open("POST", "/protocol/upload", true);
     xhr.onload = function () {
         if (xhr.status === 200) {
-            csvStatus.innerText = `CSV: ${file.name}`;
             void loadState();
         } else {
-            csvStatus.innerText = "Ошибка загрузки CSV";
+            csvNameDisplay.innerText = "Ошибка загрузки CSV";
+            clearCsvBtn.hidden = true;
         }
     };
     xhr.onerror = function () {
-        csvStatus.innerText = "Ошибка загрузки CSV";
+        csvNameDisplay.innerText = "Ошибка загрузки CSV";
+        clearCsvBtn.hidden = true;
     };
     xhr.send(formData);
+});
+
+csvPickBtn.addEventListener("click", () => {
+    csvInput.click();
 });
 
 downloadBtn.addEventListener("click", async function () {
@@ -634,7 +730,8 @@ downloadBtn.addEventListener("click", async function () {
         return;
     }
 
-    uploadStatus.innerText = "Download queued";
+    uploadStatus.innerText = "Скачивание запущено";
+    processStatusWrap.hidden = false;
 
     try {
         const payload = { url };
@@ -651,18 +748,60 @@ downloadBtn.addEventListener("click", async function () {
         }
         await callJson("/download", payload);
     } catch (err) {
-        uploadStatus.innerText = `Download failed: ${err.message}`;
+        uploadStatus.innerText = `Ошибка скачивания: ${err.message}`;
     }
 
     void loadState();
 });
 
+filePickBtn.addEventListener("click", () => {
+    fileInput.click();
+});
+
+clearFileBtn.addEventListener("click", async () => {
+    try {
+        await callJson("/video/clear");
+        fileInput.value = "";
+        resetFileDisplay();
+        void loadState();
+    } catch (err) {
+        uploadStatus.innerText = `Ошибка удаления: ${err.message}`;
+        processStatusWrap.hidden = false;
+    }
+});
+
+clearCsvBtn.addEventListener("click", async () => {
+    try {
+        await callJson("/protocol/clear");
+        csvInput.value = "";
+        resetCsvDisplay();
+        void loadState();
+    } catch (err) {
+        csvNameDisplay.innerText = `Ошибка удаления: ${err.message}`;
+        clearCsvBtn.hidden = true;
+    }
+});
+
+videoSourceFile.addEventListener("change", () => {
+    if (videoSourceFile.checked) {
+        setVideoSource("file");
+        updateControls(latestState || {});
+    }
+});
+
+videoSourceUrl.addEventListener("change", () => {
+    if (videoSourceUrl.checked) {
+        setVideoSource("url");
+        updateControls(latestState || {});
+    }
+});
+
 startBtn.addEventListener("click", async () => {
-    uploadStatus.innerText = "Processing queued";
+    uploadStatus.innerText = "Анализ запущен";
     try {
         await callJson("/process/start", { settings: readSettingsFromUI() });
     } catch (err) {
-        uploadStatus.innerText = `Start failed: ${err.message}`;
+        uploadStatus.innerText = `Ошибка запуска: ${err.message}`;
     }
     void loadState();
 });
@@ -670,9 +809,9 @@ startBtn.addEventListener("click", async () => {
 cancelBtn.addEventListener("click", async () => {
     try {
         await callJson("/process/cancel");
-        uploadStatus.innerText = "Cancel requested";
+        uploadStatus.innerText = "Отмена запрошена";
     } catch (err) {
-        uploadStatus.innerText = `Cancel failed: ${err.message}`;
+        uploadStatus.innerText = `Ошибка отмены: ${err.message}`;
     }
     void loadState();
 });
@@ -680,12 +819,12 @@ cancelBtn.addEventListener("click", async () => {
 resetStateBtn.addEventListener("click", async () => {
     try {
         await callJson("/state/reset", { clear_events: false });
-        uploadStatus.innerText = "State reset";
+        uploadStatus.innerText = "Состояние сброшено";
         videoError.hidden = true;
         videoError.innerText = "";
         hasVideoLoadError = false;
     } catch (err) {
-        uploadStatus.innerText = `Reset failed: ${err.message}`;
+        uploadStatus.innerText = `Ошибка сброса: ${err.message}`;
     }
     void loadState();
 });
@@ -867,12 +1006,12 @@ rightPanel.addEventListener("mouseleave", () => {
 
 function syncTrimVisibility() {
     const hasUrl = Boolean(urlInput.value.trim());
-    trimFields.hidden = !(trimToggle.checked && hasUrl);
-    trimToggle.disabled = !hasUrl;
-    if (!hasUrl) {
+    const isUrlMode = videoSourceUrl?.checked;
+    trimToggle.disabled = !hasUrl || !isUrlMode;
+    if (!hasUrl || !isUrlMode) {
         trimToggle.checked = false;
-        trimFields.hidden = true;
     }
+    trimFields.hidden = !(trimToggle.checked && hasUrl && isUrlMode);
 }
 
 urlInput.addEventListener("input", () => {
@@ -944,5 +1083,6 @@ if (cachedUI) {
     appShell.classList.remove("ui-booting");
 }
 
+setVideoSource("file");
 syncTrimVisibility();
 void loadState();
