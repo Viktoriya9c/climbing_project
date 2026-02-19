@@ -4,6 +4,7 @@ from threading import Lock, Thread
 from urllib.parse import unquote, urlparse
 
 import requests
+import subprocess
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -39,6 +40,12 @@ templates = Jinja2Templates(directory="templates")
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 ACTIVE_PHASES = {"uploading", "downloading", "converting", "processing"}
+DEFAULT_SETTINGS = {
+    "frame_interval_sec": 3,
+    "conf_limit": 3,
+    "session_timeout_sec": 240,
+    "phantom_timeout_sec": 60,
+}
 
 _worker_lock = Lock()
 _worker_thread: Thread | None = None
@@ -89,11 +96,15 @@ def _reset_state(*, clear_events: bool = False):
         "processing": False,
         "phase": "idle",
         "progress": 0,
+        "phase_started_at": None,
         "cancel_requested": False,
         "results_text": "",
         "playback": {"source": None, "position": 0},
+        "video_bytes": None,
+        "converted_bytes": None,
         "bboxes": [],
         "timestamps": [],
+        "settings": dict(DEFAULT_SETTINGS),
     })
     if clear_events:
         state["events"] = []
@@ -118,6 +129,7 @@ def _reconcile_runtime_state() -> dict:
         state["cancel_requested"] = False
         state["phase"] = "idle"
         state["progress"] = 0
+        state["phase_started_at"] = None
         changed = True
         append_event(
             "Runtime reconcile: worker missing, phase reset to idle",
@@ -131,7 +143,7 @@ def _reconcile_runtime_state() -> dict:
     return state
 
 
-def _download_with_ytdlp(url: str) -> Path:
+def _download_with_ytdlp(url: str, *, start_time: int | None = None, end_time: int | None = None) -> Path:
     if yt_dlp is None:
         raise RuntimeError("yt-dlp is not installed")
 
@@ -162,6 +174,20 @@ def _download_with_ytdlp(url: str) -> Path:
         "restrictfilenames": True,
     }
 
+    if start_time is not None and end_time is not None and end_time > start_time:
+        opts["external_downloader"] = "ffmpeg"
+        opts["external_downloader_args"] = {
+            "ffmpeg_i": [
+                "-ss", str(start_time),
+                "-to", str(end_time),
+            ]
+        }
+        opts["download_sections"] = [{
+            "start_time": start_time,
+            "end_time": end_time,
+        }]
+        opts["force_keyframes_at_cuts"] = True
+
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         file_path = Path(ydl.prepare_filename(info)).resolve()
@@ -188,6 +214,9 @@ def _download_direct(url: str) -> Path:
 
     with requests.get(url, stream=True, timeout=30) as response:
         response.raise_for_status()
+        content_type = (response.headers.get("content-type") or "").lower()
+        if content_type.startswith("text/") or "html" in content_type:
+            raise RuntimeError(f"downloaded content is not video (content-type: {content_type})")
         total = int(response.headers.get("content-length", 0))
         downloaded = 0
 
@@ -206,8 +235,109 @@ def _download_direct(url: str) -> Path:
 
     if not file_path.exists() or file_path.stat().st_size == 0:
         raise RuntimeError("downloaded file is empty")
+    try:
+        with file_path.open("rb") as fh:
+            head = fh.read(512).lstrip().lower()
+            if head.startswith(b"<!doctype") or head.startswith(b"<html"):
+                raise RuntimeError("downloaded content is HTML, not video")
+    except OSError:
+        pass
 
     return file_path
+
+
+def _trim_video(
+    source_path: Path,
+    output_dir: Path,
+    *,
+    start_time: int,
+    end_time: int,
+    check_cancel,
+) -> Path:
+    if end_time <= start_time:
+        raise RuntimeError("invalid trim range")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target_path = (output_dir / f"{source_path.stem}_trim_{start_time}_{end_time}.mp4").resolve()
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(start_time),
+        "-to",
+        str(end_time),
+        "-i",
+        str(source_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-movflags",
+        "+faststart",
+        "-c:a",
+        "aac",
+        str(target_path),
+    ]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        if proc.stderr is not None:
+            for _ in proc.stderr:
+                if check_cancel():
+                    proc.kill()
+                    raise CancelledError("trim cancelled")
+    finally:
+        proc.wait()
+
+    if proc.returncode != 0 or not target_path.exists():
+        raise RuntimeError("trim failed")
+
+    return target_path
+
+
+def _remux_to_mp4(source_path: Path, output_dir: Path, *, check_cancel) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target_path = (output_dir / f"{source_path.stem}_remux.mp4").resolve()
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(source_path),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(target_path),
+    ]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        if proc.stderr is not None:
+            for _ in proc.stderr:
+                if check_cancel():
+                    proc.kill()
+                    raise CancelledError("remux cancelled")
+    finally:
+        proc.wait()
+
+    if proc.returncode != 0 or not target_path.exists():
+        raise RuntimeError("remux failed")
+
+    return target_path
 
 
 @app.middleware("http")
@@ -321,6 +451,7 @@ async def upload_video(file: UploadFile = File(...)):
     update_state({
         "phase": "uploading",
         "progress": 0,
+        "phase_started_at": time.time(),
         "processing": True,
         "cancel_requested": False,
     })
@@ -334,7 +465,12 @@ async def upload_video(file: UploadFile = File(...)):
                 if total_read > MAX_UPLOAD_BYTES:
                     out.close()
                     file_path.unlink(missing_ok=True)
-                    update_state({"phase": "error", "processing": False, "progress": 0})
+                    update_state({
+                        "phase": "error",
+                        "processing": False,
+                        "progress": 0,
+                        "phase_started_at": time.time(),
+                    })
                     append_event(
                         "Upload rejected: file exceeds 2GB",
                         event_type="process",
@@ -349,7 +485,7 @@ async def upload_video(file: UploadFile = File(...)):
                         event_type="process"
                     )
     except Exception as exc:
-        update_state({"phase": "error", "processing": False, "progress": 0})
+        update_state({"phase": "error", "processing": False, "progress": 0, "phase_started_at": time.time()})
         append_event(f"Upload failed: {exc}", event_type="process", level="error")
         return JSONResponse({"error": "upload failed"}, status_code=500)
 
@@ -357,10 +493,12 @@ async def upload_video(file: UploadFile = File(...)):
         validate_video_file(file_path)
     except ProcessingError as exc:
         file_path.unlink(missing_ok=True)
-        patch = {"phase": "error", "processing": False, "progress": 0}
+        patch = {"phase": "error", "processing": False, "progress": 0, "phase_started_at": time.time()}
         if load_state().get("video") == file_name:
             patch["video"] = None
             patch["converted"] = None
+            patch["video_bytes"] = None
+            patch["converted_bytes"] = None
         update_state(patch)
         append_event(f"Upload failed: {exc}", event_type="process", level="error")
         return JSONResponse({"error": "uploaded file is not a valid video"}, status_code=400)
@@ -371,8 +509,11 @@ async def upload_video(file: UploadFile = File(...)):
         "protocol_csv": load_state().get("protocol_csv"),
         "phase": "uploaded",
         "progress": 100,
+        "phase_started_at": time.time(),
         "processing": False,
         "cancel_requested": False,
+        "video_bytes": file_path.stat().st_size,
+        "converted_bytes": None,
         "bboxes": [],
         "timestamps": [],
         "results_text": "",
@@ -402,30 +543,27 @@ async def upload_protocol(file: UploadFile = File(...)):
     return {"status": "ok", "filename": file_name}
 
 
-def _download_worker(url: str):
+def _download_worker(url: str, *, start_time: int | None = None, end_time: int | None = None):
     try:
         update_state({
             "phase": "downloading",
             "progress": 0,
+            "phase_started_at": time.time(),
             "processing": True,
             "cancel_requested": False,
         })
         append_event("Download started", event_type="process", details={"url": url})
 
         host = (urlparse(url).hostname or "").lower()
-        use_ytdlp = ("vk.com" in host or "youtube.com" in host or "youtu.be" in host)
+        use_ytdlp = yt_dlp is not None
 
         try:
             if use_ytdlp:
-                file_path = _download_with_ytdlp(url)
+                file_path = _download_with_ytdlp(url, start_time=start_time, end_time=end_time)
             else:
                 file_path = _download_direct(url)
         except Exception as primary_error:
             if use_ytdlp:
-                if yt_dlp is None:
-                    raise RuntimeError(
-                        "yt-dlp is required for this URL (install dependency and restart service)"
-                    ) from primary_error
                 append_event(
                     f"yt-dlp failed, fallback to direct download: {primary_error}",
                     event_type="process",
@@ -435,7 +573,34 @@ def _download_worker(url: str):
             else:
                 raise
 
-        validate_video_file(file_path)
+        if start_time is not None and end_time is not None and not use_ytdlp:
+            append_event(
+                "Trimming downloaded file with ffmpeg",
+                event_type="process",
+                details={"start": start_time, "end": end_time},
+            )
+            trimmed = _trim_video(
+                file_path,
+                CONVERTED_DIR,
+                start_time=start_time,
+                end_time=end_time,
+                check_cancel=_cancel_requested,
+            )
+            file_path = trimmed
+        try:
+            validate_video_file(file_path)
+        except ProcessingError as exc:
+            if not use_ytdlp:
+                append_event(
+                    "Direct download invalid, attempting ffmpeg remux",
+                    event_type="process",
+                    level="warning",
+                )
+                remuxed = _remux_to_mp4(file_path, CONVERTED_DIR, check_cancel=_cancel_requested)
+                validate_video_file(remuxed)
+                file_path = remuxed
+            else:
+                raise exc
 
         update_state({
             "video": file_path.name,
@@ -443,8 +608,11 @@ def _download_worker(url: str):
             "protocol_csv": load_state().get("protocol_csv"),
             "phase": "downloaded",
             "progress": 100,
+            "phase_started_at": time.time(),
             "processing": False,
             "cancel_requested": False,
+            "video_bytes": file_path.stat().st_size,
+            "converted_bytes": None,
             "bboxes": [],
             "timestamps": [],
             "results_text": "",
@@ -452,10 +620,10 @@ def _download_worker(url: str):
         append_event("Download complete", event_type="process", details={"file": file_path.name})
 
     except CancelledError:
-        update_state({"phase": "idle", "progress": 0, "processing": False, "cancel_requested": False})
+        update_state({"phase": "idle", "progress": 0, "phase_started_at": None, "processing": False, "cancel_requested": False})
         append_event("Download cancelled", event_type="process", level="warning")
     except Exception as exc:
-        update_state({"phase": "error", "processing": False})
+        update_state({"phase": "error", "processing": False, "phase_started_at": time.time()})
         append_event(f"Download failed: {exc}", event_type="process", level="error")
     finally:
         _clear_worker()
@@ -470,13 +638,28 @@ async def download_video(payload: dict):
     if not url:
         return JSONResponse({"error": "no url"}, status_code=400)
 
-    worker = Thread(target=_download_worker, args=(url,), daemon=True)
+    def _parse_int(name: str) -> int | None:
+        raw = payload.get(name)
+        if raw is None or raw == "":
+            return None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return max(0, value)
+
+    start_time = _parse_int("start_time")
+    end_time = _parse_int("end_time")
+    if start_time is not None and end_time is not None and end_time <= start_time:
+        return JSONResponse({"error": "end_time must be greater than start_time"}, status_code=400)
+
+    worker = Thread(target=_download_worker, args=(url,), kwargs={"start_time": start_time, "end_time": end_time}, daemon=True)
     _set_worker(worker)
     worker.start()
     return {"status": "accepted"}
 
 
-def _processing_worker(source_name: str):
+def _processing_worker(source_name: str, settings: dict):
     try:
         source_path = (UPLOAD_DIR / source_name).resolve()
         if source_path.parent != UPLOAD_DIR.resolve() or not source_path.exists():
@@ -493,11 +676,13 @@ def _processing_worker(source_name: str):
         update_state({
             "phase": "converting",
             "progress": 0,
+            "phase_started_at": time.time(),
             "processing": True,
             "cancel_requested": False,
             "bboxes": [],
             "timestamps": [],
             "results_text": "",
+            "settings": settings,
         })
         append_event("Pipeline started", event_type="process", details={"video": source_name})
 
@@ -515,16 +700,26 @@ def _processing_worker(source_name: str):
         update_state({
             "phase": "converted",
             "progress": 100,
+            "phase_started_at": time.time(),
             "converted": analysis_path.name if was_converted else None,
+            "converted_bytes": analysis_path.stat().st_size if was_converted else None,
         })
 
-        update_state({"phase": "processing", "progress": 0})
+        update_state({"phase": "processing", "progress": 0, "phase_started_at": time.time()})
+        def _progress_cb(p: int):
+            update_state({"progress": p})
+
+        def _partial_cb(patch: dict):
+            update_state(patch)
+
         analysis = run_protocol_analysis(
             analysis_path,
             protocol_path,
             MODEL_PATH,
+            settings=settings,
+            partial_cb=_partial_cb,
             check_cancel=_cancel_requested,
-            progress_cb=lambda p: update_state({"progress": p}),
+            progress_cb=_progress_cb,
             event_cb=lambda msg: append_event(msg, event_type="process"),
         )
 
@@ -534,46 +729,74 @@ def _processing_worker(source_name: str):
         update_state({
             "phase": "done",
             "progress": 100,
+            "phase_started_at": time.time(),
             "processing": False,
             "cancel_requested": False,
+            "converted_bytes": analysis_path.stat().st_size if was_converted else None,
             **analysis,
         })
         append_event("Pipeline done", event_type="process")
 
     except CancelledError:
-        update_state({"phase": "idle", "progress": 0, "processing": False, "cancel_requested": False})
+        update_state({"phase": "idle", "progress": 0, "phase_started_at": None, "processing": False, "cancel_requested": False})
         append_event("Pipeline cancelled", event_type="process", level="warning")
     except FileNotFoundError:
-        update_state({"phase": "error", "processing": False})
+        update_state({"phase": "error", "processing": False, "phase_started_at": time.time()})
         append_event("Pipeline failed: source video not found", event_type="process", level="error")
     except ProcessingError as exc:
-        update_state({"phase": "error", "processing": False})
+        update_state({"phase": "error", "processing": False, "phase_started_at": time.time()})
         append_event(f"Pipeline failed: {exc}", event_type="process", level="error")
     except Exception as exc:
-        update_state({"phase": "error", "processing": False})
+        update_state({"phase": "error", "processing": False, "phase_started_at": time.time()})
         append_event(f"Pipeline failed: {exc}", event_type="process", level="error")
     finally:
         _clear_worker()
 
 
+def _parse_settings(payload: dict | None) -> dict:
+    raw = (payload or {}).get("settings") or {}
+
+    def _int(name: str, default: int, min_value: int, max_value: int) -> int:
+        value = raw.get(name, default)
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(min_value, min(max_value, value))
+
+    return {
+        "frame_interval_sec": _int("frame_interval_sec", DEFAULT_SETTINGS["frame_interval_sec"], 1, 30),
+        "conf_limit": _int("conf_limit", DEFAULT_SETTINGS["conf_limit"], 1, 10),
+        "session_timeout_sec": _int("session_timeout_sec", DEFAULT_SETTINGS["session_timeout_sec"], 10, 3600),
+        "phantom_timeout_sec": _int("phantom_timeout_sec", DEFAULT_SETTINGS["phantom_timeout_sec"], 5, 3600),
+    }
+
+
 @app.post("/process/start")
-async def start_processing():
+async def start_processing(payload: dict | None = None):
     if _worker_active():
         return JSONResponse({"error": "another process is running"}, status_code=409)
 
     state = load_state()
+    settings = _parse_settings(payload)
     source_name = state.get("video")
     if not source_name:
         return JSONResponse({"error": "no video selected"}, status_code=400)
     source_path = (UPLOAD_DIR / source_name).resolve()
     if source_path.parent != UPLOAD_DIR.resolve() or not source_path.exists():
-        update_state({"phase": "error", "processing": False, "progress": 0, "video": None})
+        update_state({
+            "phase": "error",
+            "processing": False,
+            "progress": 0,
+            "phase_started_at": time.time(),
+            "video": None,
+        })
         append_event("Pipeline failed: selected video not found", event_type="process", level="error")
         return JSONResponse({"error": "selected video not found"}, status_code=400)
     try:
         validate_video_file(source_path)
     except ProcessingError as exc:
-        update_state({"phase": "error", "processing": False, "progress": 0, "video": None, "converted": None})
+        update_state({"phase": "error", "processing": False, "progress": 0, "phase_started_at": time.time(), "video": None, "converted": None})
         append_event(f"Pipeline failed: {exc}", event_type="process", level="error")
         return JSONResponse({"error": "selected file is not a valid video"}, status_code=400)
     protocol_name = state.get("protocol_csv")
@@ -583,7 +806,9 @@ async def start_processing():
     if protocol_path.parent != PROTOCOL_DIR.resolve() or not protocol_path.exists():
         return JSONResponse({"error": "protocol csv not found"}, status_code=400)
 
-    worker = Thread(target=_processing_worker, args=(source_name,), daemon=True)
+    update_state({"settings": settings})
+
+    worker = Thread(target=_processing_worker, args=(source_name, settings), daemon=True)
     _set_worker(worker)
     worker.start()
     return {"status": "accepted"}

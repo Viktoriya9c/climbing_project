@@ -11,9 +11,19 @@ const uploadStatus = document.getElementById("uploadStatus");
 const uploadProgress = document.getElementById("uploadProgress");
 const urlInput = document.getElementById("urlInput");
 const downloadBtn = document.getElementById("downloadBtn");
+const trimToggle = document.getElementById("trimToggle");
+const trimFields = document.getElementById("trimFields");
+const trimStartInput = document.getElementById("trimStartInput");
+const trimEndInput = document.getElementById("trimEndInput");
+const videoInfo = document.getElementById("videoInfo");
+const frameIntervalInput = document.getElementById("frameIntervalInput");
+const confLimitInput = document.getElementById("confLimitInput");
+const sessionTimeoutInput = document.getElementById("sessionTimeoutInput");
+const phantomTimeoutInput = document.getElementById("phantomTimeoutInput");
 
 const statusText = document.getElementById("statusText");
 const statusDescription = document.getElementById("statusDescription");
+const statusMeta = document.getElementById("statusMeta");
 const spinnerWrap = document.getElementById("spinnerWrap");
 
 const startBtn = document.getElementById("startBtn");
@@ -80,6 +90,62 @@ function setProgress(percent) {
     const safe = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
     uploadProgress.style.width = `${safe}%`;
     uploadProgress.innerText = `${safe}%`;
+}
+
+function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        return "";
+    }
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes;
+    let unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+    }
+    return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatDuration(seconds) {
+    const total = Math.max(0, Math.floor(seconds));
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    if (m > 0) {
+        return `${m} мин ${s.toString().padStart(2, "0")} сек`;
+    }
+    return `${s} сек`;
+}
+
+function clampInt(value, fallback, min, max) {
+    const num = Number.parseInt(value, 10);
+    if (!Number.isFinite(num)) {
+        return fallback;
+    }
+    return Math.max(min, Math.min(max, num));
+}
+
+function readSettingsFromUI() {
+    return {
+        frame_interval_sec: clampInt(frameIntervalInput.value, 3, 1, 30),
+        conf_limit: clampInt(confLimitInput.value, 3, 1, 10),
+        session_timeout_sec: clampInt(sessionTimeoutInput.value, 240, 10, 3600),
+        phantom_timeout_sec: clampInt(phantomTimeoutInput.value, 60, 5, 3600)
+    };
+}
+
+function applySettingsFromState(state) {
+    const settings = state?.settings || {};
+    const setValue = (input, value) => {
+        if (document.activeElement === input) {
+            return;
+        }
+        input.value = value;
+    };
+
+    setValue(frameIntervalInput, settings.frame_interval_sec ?? 3);
+    setValue(confLimitInput, settings.conf_limit ?? 3);
+    setValue(sessionTimeoutInput, settings.session_timeout_sec ?? 240);
+    setValue(phantomTimeoutInput, settings.phantom_timeout_sec ?? 60);
 }
 
 function getUIPrefs(state) {
@@ -183,6 +249,7 @@ function updateControls(state) {
     downloadBtn.disabled = operationActive;
     fileInput.disabled = operationActive;
     resetStateBtn.disabled = operationActive;
+    trimToggle.disabled = operationActive || !urlInput.value.trim();
 
     statusText.innerText = `Фаза: ${phase}`;
     statusDescription.innerText = describePhase(phase);
@@ -192,6 +259,46 @@ function updateControls(state) {
         uploadStatus.innerText = `Текущее видео: ${state.video}`;
     }
     csvStatus.innerText = state.protocol_csv ? `CSV: ${state.protocol_csv}` : "CSV не загружен";
+}
+
+function updateVideoInfo(state) {
+    const parts = [];
+    if (state.video) {
+        const size = formatBytes(state.video_bytes);
+        parts.push(`Видео: ${state.video}${size ? ` (${size})` : ""}`);
+    }
+    if (state.converted) {
+        const size = formatBytes(state.converted_bytes);
+        parts.push(`Converted: ${state.converted}${size ? ` (${size})` : ""}`);
+    }
+    videoInfo.innerText = parts.join(" · ");
+}
+
+function updateStatusMeta(state) {
+    const phase = normalizePhase(state.phase);
+    const progress = Number(state.progress);
+    const parts = [];
+
+    if (ACTIVE_PHASES.has(phase)) {
+        parts.push(`Операция: ${phase}`);
+    }
+
+    const startedAt = Number(state.phase_started_at);
+    if (ACTIVE_PHASES.has(phase) && Number.isFinite(startedAt) && startedAt > 0) {
+        const elapsed = Math.max(0, (Date.now() / 1000) - startedAt);
+        if (elapsed >= 1) {
+            parts.push(`Прошло: ${formatDuration(elapsed)}`);
+        }
+        if (Number.isFinite(progress) && progress > 0 && progress < 100) {
+            const etaSec = (elapsed * (100 - progress)) / progress;
+            if (Number.isFinite(etaSec) && etaSec >= 1) {
+                const etaMin = Math.max(1, Math.round(etaSec / 60));
+                parts.push(`Осталось ~${etaMin} мин`);
+            }
+        }
+    }
+
+    statusMeta.innerText = parts.join(" · ");
 }
 
 function getCurrentUI() {
@@ -372,6 +479,9 @@ function renderState(state) {
     setProgress(state.progress);
     updateControls(state);
     applyUIPrefs(getUIPrefs(state));
+    applySettingsFromState(state);
+    updateVideoInfo(state);
+    updateStatusMeta(state);
     syncVideoSource(state);
     renderSegments(state);
     drawOverlay(state);
@@ -527,7 +637,19 @@ downloadBtn.addEventListener("click", async function () {
     uploadStatus.innerText = "Download queued";
 
     try {
-        await callJson("/download", { url });
+        const payload = { url };
+        if (trimToggle.checked) {
+            const startVal = clampInt(trimStartInput.value, 0, 0, 999999);
+            const endVal = clampInt(trimEndInput.value, 0, 0, 999999);
+            if (endVal > startVal) {
+                payload.start_time = startVal;
+                payload.end_time = endVal;
+            } else {
+                uploadStatus.innerText = "Конец должен быть больше начала";
+                return;
+            }
+        }
+        await callJson("/download", payload);
     } catch (err) {
         uploadStatus.innerText = `Download failed: ${err.message}`;
     }
@@ -538,7 +660,7 @@ downloadBtn.addEventListener("click", async function () {
 startBtn.addEventListener("click", async () => {
     uploadStatus.innerText = "Processing queued";
     try {
-        await callJson("/process/start");
+        await callJson("/process/start", { settings: readSettingsFromUI() });
     } catch (err) {
         uploadStatus.innerText = `Start failed: ${err.message}`;
     }
@@ -743,6 +865,24 @@ rightPanel.addEventListener("mouseleave", () => {
     }
 });
 
+function syncTrimVisibility() {
+    const hasUrl = Boolean(urlInput.value.trim());
+    trimFields.hidden = !(trimToggle.checked && hasUrl);
+    trimToggle.disabled = !hasUrl;
+    if (!hasUrl) {
+        trimToggle.checked = false;
+        trimFields.hidden = true;
+    }
+}
+
+urlInput.addEventListener("input", () => {
+    syncTrimVisibility();
+});
+
+trimToggle.addEventListener("change", () => {
+    syncTrimVisibility();
+});
+
 document.addEventListener("mousedown", (event) => {
     const current = getUIPrefs(latestState || {});
     const target = event.target;
@@ -804,4 +944,5 @@ if (cachedUI) {
     appShell.classList.remove("ui-booting");
 }
 
+syncTrimVisibility();
 void loadState();

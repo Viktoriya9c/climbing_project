@@ -230,11 +230,23 @@ def _format_time(seconds: float) -> str:
     return f"{m:02d}:{sec:02d}"
 
 
+def _build_results_text(results: list[dict]) -> str:
+    lines = ["00:00 Начало трансляции"]
+    lines.extend(f"{item['time_text']} #{item['num']} {item['name']}" for item in results)
+    return "\n".join(lines)
+
+
+def _build_timestamps(results: list[dict]) -> list[dict]:
+    return [{"time": r["time"], "label": r["label"]} for r in results]
+
+
 def run_protocol_analysis(
     video_path: Path,
     protocol_csv: Path,
     model_path: Path,
     *,
+    settings: dict | None = None,
+    partial_cb=None,
     check_cancel,
     progress_cb,
     event_cb,
@@ -258,18 +270,42 @@ def run_protocol_analysis(
         raise ProcessingError(f"cannot open video: {video_path.name}")
 
     duration = _ffprobe_duration(video_path)
-    total_steps = max(1, int(duration * 2))
+    settings = settings or {}
+    frame_interval = max(1, int(settings.get("frame_interval_sec", 3)))
+    conf_limit = max(1, int(settings.get("conf_limit", 3)))
+    session_timeout_sec = max(0, int(settings.get("session_timeout_sec", 240)))
+    phantom_timeout_sec = max(0, int(settings.get("phantom_timeout_sec", 60)))
+
+    total_steps = max(1, int(duration / frame_interval))
     step = 0
     frame_ms = 0
 
-    # temporal smoothing / confirmation buffer from archive logic
-    conf_limit = 3
+    # temporal smoothing / confirmation buffer
     candidates: dict[str, dict] = {}
-    confirmed = set()
+    last_confirmed_time: dict[str, float] = {}
     results = []
     latest_bboxes = []
 
-    event_cb("Analysis started (YOLO fast, 2 fps)")
+    event_cb(f"Analysis started (YOLO, {frame_interval}s step)")
+    dirty = True
+    last_emit_time = time.monotonic()
+
+    def emit_partial(force: bool = False):
+        nonlocal dirty, last_emit_time
+        if partial_cb is None:
+            return
+        now = time.monotonic()
+        if not force and (not dirty or (now - last_emit_time) < 1.0):
+            return
+        partial_cb({
+            "timestamps": _build_timestamps(results),
+            "results_text": _build_results_text(results),
+            "bboxes": latest_bboxes,
+        })
+        dirty = False
+        last_emit_time = now
+
+    emit_partial(force=True)
 
     try:
         while cap.isOpened() and step < total_steps:
@@ -287,47 +323,66 @@ def run_protocol_analysis(
             time_str = _format_time(frame_ms / 1000)
             time_sec = round(frame_ms / 1000, 2)
 
+            # drop stale candidates (phantom protection)
+            if phantom_timeout_sec > 0 and candidates:
+                stale = [
+                    num for num, data in candidates.items()
+                    if (time_sec - data["last_seen"]) > phantom_timeout_sec
+                ]
+                for num in stale:
+                    del candidates[num]
+
             for num, name in matched:
-                if num in confirmed:
+                if not num:
                     continue
+
+                if num in last_confirmed_time and session_timeout_sec > 0:
+                    if time_sec - last_confirmed_time[num] < session_timeout_sec:
+                        continue
+
                 if num not in candidates:
                     candidates[num] = {
                         "count": 1,
                         "first_time": time_str,
                         "first_sec": time_sec,
                         "name": name,
+                        "last_seen": time_sec,
                     }
                 else:
                     candidates[num]["count"] += 1
-                    if candidates[num]["count"] >= conf_limit:
-                        confirmed.add(num)
-                        results.append({
-                            "time": candidates[num]["first_sec"],
-                            "label": f"#{num} {name}",
-                            "num": num,
-                            "name": name,
-                            "time_text": candidates[num]["first_time"],
-                        })
-                        del candidates[num]
+                    candidates[num]["last_seen"] = time_sec
+
+                if candidates[num]["count"] >= conf_limit:
+                    results.append({
+                        "time": candidates[num]["first_sec"],
+                        "label": f"#{num} {name}",
+                        "num": num,
+                        "name": name,
+                        "time_text": candidates[num]["first_time"],
+                    })
+                    last_confirmed_time[num] = time_sec
+                    del candidates[num]
+                    dirty = True
 
             progress = int(((step + 1) / total_steps) * 100)
             progress_cb(progress)
+            emit_partial(force=False)
 
             if step % 20 == 0:
                 event_cb(f"Analysis progress: {progress}%")
 
             step += 1
-            frame_ms += 500
+            frame_ms += frame_interval * 1000
 
     finally:
         cap.release()
 
     results.sort(key=lambda x: x.get("time", 0))
-    lines = [f"{item['time_text']} #{item['num']} {item['name']}" for item in results]
 
     event_cb("Analysis complete")
+    emit_partial(force=True)
     return {
-        "timestamps": [{"time": r["time"], "label": r["label"]} for r in results],
+        "timestamps": _build_timestamps(results),
         "bboxes": latest_bboxes,
-        "results_text": "\n".join(lines),
+        "results_text": _build_results_text(results),
     }

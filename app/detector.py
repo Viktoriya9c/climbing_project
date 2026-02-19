@@ -34,6 +34,7 @@ class PersonNumberDetector:
     def detect(self, frame, matcher):
         results = self.model(frame, verbose=False)[0]
         matched = []
+        # TODO: bbox rendering temporarily disabled to reduce UI noise.
         bboxes = []
 
         boxes = getattr(results, "boxes", None)
@@ -64,12 +65,12 @@ class PersonNumberDetector:
 
                 matched.append((num, name))
                 h, w = frame.shape[:2]
-                bboxes.append({
-                    "x": x1 / max(1, w),
-                    "y": y1 / max(1, h),
-                    "w": (x2 - x1) / max(1, w),
-                    "h": (y2 - y1) / max(1, h),
-                    "label": str(num),
-                })
+                # bboxes.append({
+                #     "x": x1 / max(1, w),
+                #     "y": y1 / max(1, h),
+                #     "w": (x2 - x1) / max(1, w),
+                #     "h": (y2 - y1) / max(1, h),
+                #     "label": str(num),
+                # })
 
         return matched, bboxes
