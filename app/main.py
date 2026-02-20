@@ -726,26 +726,6 @@ async def reset_state(payload: dict | None = None):
     if _worker_active():
         return JSONResponse({"error": "cannot reset during active process"}, status_code=409)
 
-    state = load_state()
-    video_name = state.get("video")
-    converted_name = state.get("converted")
-    protocol_name = state.get("protocol_csv")
-
-    if isinstance(video_name, str) and video_name:
-        path = (UPLOAD_DIR / video_name).resolve()
-        if path.parent == UPLOAD_DIR.resolve():
-            _safe_unlink(path)
-
-    if isinstance(converted_name, str) and converted_name:
-        path = (CONVERTED_DIR / converted_name).resolve()
-        if path.parent == CONVERTED_DIR.resolve():
-            _safe_unlink(path)
-
-    if isinstance(protocol_name, str) and protocol_name:
-        path = (PROTOCOL_DIR / protocol_name).resolve()
-        if path.parent == PROTOCOL_DIR.resolve():
-            _safe_unlink(path)
-
     clear_events = bool((payload or {}).get("clear_events"))
     _reset_state(clear_events=clear_events)
     append_event("State reset requested from UI", event_type="event", level="warning")
@@ -857,20 +837,6 @@ async def clear_video():
     if _worker_active():
         return JSONResponse({"error": "cannot clear during active process"}, status_code=409)
 
-    state = load_state()
-    video_name = state.get("video")
-    converted_name = state.get("converted")
-
-    if video_name:
-        path = (UPLOAD_DIR / video_name).resolve()
-        if path.parent == UPLOAD_DIR.resolve():
-            _safe_unlink(path)
-
-    if converted_name:
-        path = (CONVERTED_DIR / converted_name).resolve()
-        if path.parent == CONVERTED_DIR.resolve():
-            _safe_unlink(path)
-
     update_state({
         "video": None,
         "converted": None,
@@ -894,13 +860,6 @@ async def clear_video():
 async def clear_protocol():
     if _worker_active():
         return JSONResponse({"error": "cannot clear during active process"}, status_code=409)
-
-    state = load_state()
-    protocol_name = state.get("protocol_csv")
-    if protocol_name:
-        path = (PROTOCOL_DIR / protocol_name).resolve()
-        if path.parent == PROTOCOL_DIR.resolve():
-            _safe_unlink(path)
 
     update_state({"protocol_csv": None})
     append_event("Protocol CSV cleared from UI", event_type="event", level="warning")
