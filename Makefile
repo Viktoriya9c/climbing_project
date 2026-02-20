@@ -21,7 +21,7 @@ test:
 	$(PYTHON) -m pytest -q
 
 clean:
-	rm -rf uploads/* converted/*
+	rm -rf input/videos/* outputs/converted/*
 	rm -f state.json
 
 docker-build:

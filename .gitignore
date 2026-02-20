@@ -27,9 +27,8 @@ dist/
 *.egg-info/
 
 # Runtime app data
-uploads/
 input/
-converted/
+outputs/
 state.json
 *.log
 models/*.pt
@@ -39,6 +38,5 @@ models/*.pt
 .env.*
 /yolov8n.pt
 logs/
-temp_data/
 /..venvScriptspython
 /cookies.txt

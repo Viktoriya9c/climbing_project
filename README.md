@@ -36,7 +36,7 @@ make run
 - `make install` — создать `.venv` и установить зависимости
 - `make run` — запуск FastAPI/uvicorn
 - `make test` — тесты
-- `make clean` — очистка runtime-данных (uploads/converted/state)
+- `make clean` — очистка runtime-данных (`input/videos`, `outputs/converted`, `state`)
 - `make docker-build` — сборка docker образа
 - `make docker-up` — запуск через docker compose
 - `make docker-down` — остановка docker compose
@@ -56,8 +56,9 @@ make docker-up
 - `app/matcher.py` — загрузка CSV и матчинг номеров
 - `app/state.py` — state/event storage
 - `templates/`, `static/` — UI
-- `uploads/`, `converted/` — runtime файлы
+- `input/videos/` — исходные видео (upload/download)
 - `input/protocols/` — загруженные CSV
+- `outputs/converted/` — видео после конвертации/remux/trim
 - `models/` — YOLO weights (опционально)
 
 ## Важно

@@ -7,9 +7,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./uploads:/app/uploads
-      - ./converted:/app/converted
       - ./input:/app/input
+      - ./outputs:/app/outputs
       - ./models:/app/models
       - ./state.json:/app/state.json
     restart: unless-stopped

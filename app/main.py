@@ -28,12 +28,12 @@ except ImportError:  # pragma: no cover - optional at runtime
 app = FastAPI()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-CONVERTED_DIR = BASE_DIR / "converted"
+UPLOAD_DIR = BASE_DIR / "input" / "videos"
+CONVERTED_DIR = BASE_DIR / "outputs" / "converted"
 PROTOCOL_DIR = BASE_DIR / "input" / "protocols"
 MODEL_PATH = BASE_DIR / "models" / "yolov8n.pt"
-UPLOAD_DIR.mkdir(exist_ok=True)
-CONVERTED_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+CONVERTED_DIR.mkdir(parents=True, exist_ok=True)
 PROTOCOL_DIR.mkdir(parents=True, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
