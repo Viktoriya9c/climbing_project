@@ -726,6 +726,26 @@ async def reset_state(payload: dict | None = None):
     if _worker_active():
         return JSONResponse({"error": "cannot reset during active process"}, status_code=409)
 
+    state = load_state()
+    video_name = state.get("video")
+    converted_name = state.get("converted")
+    protocol_name = state.get("protocol_csv")
+
+    if isinstance(video_name, str) and video_name:
+        path = (UPLOAD_DIR / video_name).resolve()
+        if path.parent == UPLOAD_DIR.resolve():
+            _safe_unlink(path)
+
+    if isinstance(converted_name, str) and converted_name:
+        path = (CONVERTED_DIR / converted_name).resolve()
+        if path.parent == CONVERTED_DIR.resolve():
+            _safe_unlink(path)
+
+    if isinstance(protocol_name, str) and protocol_name:
+        path = (PROTOCOL_DIR / protocol_name).resolve()
+        if path.parent == PROTOCOL_DIR.resolve():
+            _safe_unlink(path)
+
     clear_events = bool((payload or {}).get("clear_events"))
     _reset_state(clear_events=clear_events)
     append_event("State reset requested from UI", event_type="event", level="warning")

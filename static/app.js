@@ -943,6 +943,15 @@ cancelBtn.addEventListener("click", async () => {
 resetStateBtn.addEventListener("click", async () => {
     try {
         await callJson("/state/reset", { clear_events: false });
+        fileInput.value = "";
+        csvInput.value = "";
+        urlInput.value = "";
+        resultsText.value = "";
+        segmentSearch.value = "";
+        setVideoSource("file");
+        resetFileDisplay();
+        resetCsvDisplay();
+        syncTrimVisibility();
         uploadStatus.innerText = "Состояние сброшено";
         videoError.hidden = true;
         videoError.innerText = "";
