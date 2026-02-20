@@ -51,7 +51,7 @@ def _default_state():
         "settings": {
             "frame_interval_sec": 3,
             "conf_limit": 3,
-            "session_timeout_sec": 240,
+            "session_timeout_sec": 360,
             "phantom_timeout_sec": 60,
         },
         "ui": {

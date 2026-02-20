@@ -104,13 +104,13 @@ function Start-UvicornBackground {
     New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
     $stdoutLog = Join-Path $logsDir "uvicorn.out.log"
     $stderrLog = Join-Path $logsDir "uvicorn.err.log"
-
     Start-Process `
         -FilePath (Join-Path $ProjectRoot $PythonExe) `
         -ArgumentList @("-m", "uvicorn", $App, "--reload", "--host", $HostAddr, "--port", $Port) `
         -WorkingDirectory $ProjectRoot `
         -RedirectStandardOutput $stdoutLog `
-        -RedirectStandardError $stderrLog
+        -RedirectStandardError $stderrLog `
+        -WindowStyle Hidden
 
     Start-Sleep -Seconds 2
     Write-Host "Uvicorn started in background: http://localhost:$Port"
