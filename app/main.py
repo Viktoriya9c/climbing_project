@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import time
 import multiprocessing as mp
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock, Thread
 from urllib.parse import unquote, urlparse
@@ -9,7 +13,7 @@ from urllib.parse import unquote, urlparse
 import requests
 import subprocess
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -20,7 +24,14 @@ from app.processing import (
     run_protocol_analysis,
     validate_video_file,
 )
-from app.state import append_event, load_state, save_state, update_state
+from app.state import (
+    append_event,
+    get_state_version,
+    load_state,
+    save_state,
+    update_state,
+    wait_for_state_change,
+)
 
 try:
     import yt_dlp
@@ -49,6 +60,21 @@ DEFAULT_SETTINGS = {
     "session_timeout_sec": 240,
     "phantom_timeout_sec": 60,
 }
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+_server_logger = logging.getLogger("climbtag.server")
+if not _server_logger.handlers:
+    _server_logger.setLevel(logging.INFO)
+    _server_logger.propagate = False
+    _server_handler = RotatingFileHandler(
+        LOG_DIR / "backend.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _server_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    _server_logger.addHandler(_server_handler)
 
 _worker_lock = Lock()
 _worker_thread: Thread | None = None
@@ -176,6 +202,32 @@ def _reconcile_runtime_state() -> dict:
     processing = bool(state.get("processing"))
     worker_active = _worker_active()
     active_phase = phase in ACTIVE_PHASES
+
+    # Clear restored file pointers if files no longer exist after restart.
+    video_name = state.get("video")
+    if isinstance(video_name, str) and video_name:
+        video_path = (UPLOAD_DIR / video_name).resolve()
+        if video_path.parent != UPLOAD_DIR.resolve() or not video_path.exists():
+            state["video"] = None
+            state["video_bytes"] = None
+            state["converted"] = None
+            state["converted_bytes"] = None
+            changed = True
+
+    converted_name = state.get("converted")
+    if isinstance(converted_name, str) and converted_name:
+        converted_path = (CONVERTED_DIR / converted_name).resolve()
+        if converted_path.parent != CONVERTED_DIR.resolve() or not converted_path.exists():
+            state["converted"] = None
+            state["converted_bytes"] = None
+            changed = True
+
+    protocol_name = state.get("protocol_csv")
+    if isinstance(protocol_name, str) and protocol_name:
+        protocol_path = (PROTOCOL_DIR / protocol_name).resolve()
+        if protocol_path.parent != PROTOCOL_DIR.resolve() or not protocol_path.exists():
+            state["protocol_csv"] = None
+            changed = True
 
     if (active_phase or processing) and not worker_active:
         state["processing"] = False
@@ -548,6 +600,7 @@ async def log_requests(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception as exc:
+        _server_logger.exception("%s %s failed", request.method, path)
         if should_log:
             append_event(
                 f"{request.method} {path} failed: {exc}",
@@ -558,6 +611,7 @@ async def log_requests(request: Request, call_next):
 
     if should_log:
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        _server_logger.info("%s %s -> %s in %dms", request.method, path, response.status_code, elapsed_ms)
         append_event(
             f"{request.method} {path} -> {response.status_code}",
             event_type="request",
@@ -596,6 +650,35 @@ async def get_converted_video(filename: str):
 @app.get("/state")
 async def get_state():
     return _reconcile_runtime_state()
+
+
+@app.get("/state/stream")
+async def state_stream(request: Request):
+    async def _events():
+        state = _reconcile_runtime_state()
+        last_version = get_state_version()
+        yield f"event: state\ndata: {json.dumps(state, ensure_ascii=False)}\n\n"
+
+        while True:
+            if await request.is_disconnected():
+                break
+            next_version = await asyncio.to_thread(wait_for_state_change, last_version, 20.0)
+            if next_version <= last_version:
+                yield "event: ping\ndata: {}\n\n"
+                continue
+            state = _reconcile_runtime_state()
+            last_version = get_state_version()
+            yield f"event: state\ndata: {json.dumps(state, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        _events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/state")

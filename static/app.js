@@ -76,6 +76,8 @@ let pendingSeekSeconds = null;
 let logsSelectionLocked = false;
 let isStateLoading = false;
 let stateLoadFailures = 0;
+let stateEventSource = null;
+let sseRetryTimer = null;
 
 const ACTIVE_PHASES = new Set(["uploading", "downloading", "converting", "processing"]);
 const UI_CACHE_KEY = "video_app_v5_ui";
@@ -678,6 +680,41 @@ async function loadState() {
     }
 }
 
+function connectStateStream() {
+    if (!window.EventSource) {
+        return;
+    }
+    if (stateEventSource) {
+        stateEventSource.close();
+    }
+
+    stateEventSource = new EventSource("/state/stream");
+
+    stateEventSource.addEventListener("state", (event) => {
+        try {
+            const state = JSON.parse(event.data || "{}");
+            stateLoadFailures = 0;
+            renderState(state);
+        } catch {
+            // ignore malformed event
+        }
+    });
+
+    stateEventSource.onerror = () => {
+        if (stateEventSource) {
+            stateEventSource.close();
+            stateEventSource = null;
+        }
+        if (sseRetryTimer) {
+            return;
+        }
+        sseRetryTimer = setTimeout(() => {
+            sseRetryTimer = null;
+            connectStateStream();
+        }, 3000);
+    };
+}
+
 async function callJson(url, payload = null) {
     const init = payload
         ? {
@@ -1056,8 +1093,11 @@ for (const el of [eventLogBox, stateLogBox]) {
 }
 
 setInterval(() => {
+    if (stateEventSource && stateEventSource.readyState === EventSource.OPEN) {
+        return;
+    }
     void loadState();
-}, 1500);
+}, 5000);
 
 window.addEventListener("resize", () => {
     if (latestState) {
@@ -1174,4 +1214,5 @@ if (cachedUI) {
 
 setVideoSource("file");
 syncTrimVisibility();
+connectStateStream();
 void loadState();

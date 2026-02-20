@@ -10,7 +10,7 @@ $VenvDir = ".venv"
 $PythonExe = Join-Path $VenvDir "Scripts/python.exe"
 $PipExe = Join-Path $VenvDir "Scripts/pip.exe"
 $App = "app.main:app"
-$HostAddr = "0.0.0.0"
+$HostAddr = "127.0.0.1"
 $Port = "8000"
 
 function Ensure-Venv {
