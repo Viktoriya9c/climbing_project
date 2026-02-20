@@ -4,10 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ClimbTag</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.3/dist/zephyr/bootstrap.min.css" rel="stylesheet">
     <link href="/static/styles.css" rel="stylesheet">
 </head>
 <body>
+<nav class="top-nav navbar navbar-expand-lg bg-primary fixed-top" data-bs-theme="dark">
+    <div class="container-fluid px-3 px-md-4">
+        <button id="topHamburgerBtn" type="button" class="navbar-toggler top-nav-hamburger border-0 p-1 me-2" aria-label="Открыть левую панель">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill-rule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5m0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5"/>
+            </svg>
+        </button>
+        <div class="top-nav-actions d-flex align-items-center gap-2 flex-wrap">
+            <button type="button" class="btn btn-link nav-link text-light border-0 top-nav-link" data-bs-toggle="modal" data-bs-target="#howToModal">Справка</button>
+        </div>
+    </div>
+</nav>
+
 <div class="app-shell ui-booting" id="appShell">
     <aside class="sidebar border-end" id="sidebar">
         <div class="p-3 p-md-4 d-flex flex-column h-100 gap-4">
@@ -18,7 +31,6 @@
                     </svg>
                     <span class="visually-hidden">Закрепить</span>
                 </button>
-                <button id="closeSidebarBtn" class="btn btn-sm btn-outline-secondary">×</button>
             </div>
 
             <section>
@@ -33,13 +45,13 @@
                 <input type="file" id="fileInput" class="visually-hidden" accept="video/*">
                 <div id="fileSourceWrap">
                     <div class="d-grid mb-2">
-                        <button class="btn btn-outline-secondary" type="button" id="filePickBtn">Загрузите файл</button>
+                        <button class="btn btn-primary" type="button" id="filePickBtn" title="Допустимы .mp4, .mov, .avi">Загрузите файл</button>
                     </div>
                 </div>
 
                 <div id="urlSourceWrap" hidden>
                     <input type="url" id="urlInput" class="form-control" placeholder="или вставьте ссылку Вконтакте...">
-                    <button id="downloadBtn" class="btn btn-outline-primary w-100 mt-2">Скачать</button>
+                    <button id="downloadBtn" class="btn btn-primary w-100 mt-2">Скачать</button>
                     <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" id="trimToggle">
                         <label class="form-check-label small" for="trimToggle">Скачать фрагмент</label>
@@ -55,9 +67,15 @@
                         </div>
                     </div>
                 </div>
-                <div id="fileInfoRow" class="d-flex align-items-center justify-content-between small text-body-secondary mb-2">
-                    <span id="fileNameDisplay">.mp4, .mov, .avi</span>
-                    <button id="clearFileBtn" class="btn btn-sm btn-outline-secondary" type="button" title="Удалить файл" hidden>×</button>
+                <div id="fileInfoRow" class="d-flex align-items-center justify-content-between small text-body-secondary mb-2" hidden>
+                    <div class="d-flex align-items-center gap-2 min-w-0">
+                        <svg id="videoFileIcon" class="info-file-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" hidden>
+                            <path d="M6 6.883v4.234a.5.5 0 0 0 .757.429l3.528-2.117a.5.5 0 0 0 0-.858L6.757 6.454a.5.5 0 0 0-.757.43z"/>
+                            <path d="M14 14V4.5L9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2M9.5 3A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h5.5z"/>
+                        </svg>
+                        <span id="fileNameDisplay"></span>
+                    </div>
+                    <button id="clearFileBtn" class="btn btn-sm clear-icon-btn" type="button" title="Удалить файл" hidden>×</button>
                 </div>
                 <div id="processStatusWrap" class="mt-2" hidden>
                     <div class="d-flex align-items-center gap-2">
@@ -76,11 +94,16 @@
                 <h2 class="h6">Протокол</h2>
                 <input type="file" id="csvInput" class="visually-hidden" accept=".csv,text/csv">
                 <div class="d-grid mb-2">
-                    <button class="btn btn-outline-secondary" type="button" id="csvPickBtn" title="Допустим только .csv">Загрузите файл</button>
+                    <button class="btn btn-primary" type="button" id="csvPickBtn" title="Допустим только .csv">Загрузите файл</button>
                 </div>
-                <div id="csvInfoRow" class="d-flex align-items-center justify-content-between small text-body-secondary">
-                    <span id="csvNameDisplay">.csv</span>
-                    <button id="clearCsvBtn" class="btn btn-sm btn-outline-secondary" type="button" title="Удалить файл" hidden>×</button>
+                <div id="csvInfoRow" class="d-flex align-items-center justify-content-between small text-body-secondary" hidden>
+                    <div class="d-flex align-items-center gap-2 min-w-0">
+                        <svg id="csvFileIcon" class="info-file-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true" hidden>
+                            <path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-1v-1h1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM3.517 14.841a1.13 1.13 0 0 0 .401.823q.195.162.478.252.284.091.665.091.507 0 .859-.158.354-.158.539-.44.187-.284.187-.656 0-.336-.134-.56a1 1 0 0 0-.375-.357 2 2 0 0 0-.566-.21l-.621-.144a1 1 0 0 1-.404-.176.37.37 0 0 1-.144-.299q0-.234.185-.384.188-.152.512-.152.214 0 .37.068a.6.6 0 0 1 .246.181.56.56 0 0 1 .12.258h.75a1.1 1.1 0 0 0-.2-.566 1.2 1.2 0 0 0-.5-.41 1.8 1.8 0 0 0-.78-.152q-.439 0-.776.15-.337.149-.527.421-.19.273-.19.639 0 .302.122.524.124.223.352.367.228.143.539.213l.618.144q.31.073.463.193a.39.39 0 0 1 .152.326.5.5 0 0 1-.085.29.56.56 0 0 1-.255.193q-.167.07-.413.07-.175 0-.32-.04a.8.8 0 0 1-.248-.115.58.58 0 0 1-.255-.384zM.806 13.693q0-.373.102-.633a.87.87 0 0 1 .302-.399.8.8 0 0 1 .475-.137q.225 0 .398.097a.7.7 0 0 1 .272.26.85.85 0 0 1 .12.381h.765v-.072a1.33 1.33 0 0 0-.466-.964 1.4 1.4 0 0 0-.489-.272 1.8 1.8 0 0 0-.606-.097q-.534 0-.911.223-.375.222-.572.632-.195.41-.196.979v.498q0 .568.193.976.197.407.572.626.375.217.914.217.439 0 .785-.164t.55-.454a1.27 1.27 0 0 0 .226-.674v-.076h-.764a.8.8 0 0 1-.118.363.7.7 0 0 1-.272.25.9.9 0 0 1-.401.087.85.85 0 0 1-.478-.132.83.83 0 0 1-.299-.392 1.7 1.7 0 0 1-.102-.627zm8.239 2.238h-.953l-1.338-3.999h.917l.896 3.138h.038l.888-3.138h.879z"/>
+                        </svg>
+                        <span id="csvNameDisplay">.csv</span>
+                    </div>
+                    <button id="clearCsvBtn" class="btn btn-sm clear-icon-btn" type="button" title="Удалить файл" hidden>×</button>
                 </div>
             </section>
 
@@ -113,9 +136,9 @@
             <section>
                 <div class="d-flex gap-2">
                     <button id="startBtn" class="btn btn-success flex-fill" disabled>Запустить</button>
-                    <button id="cancelBtn" class="btn btn-outline-danger flex-fill" disabled>Прервать</button>
+                    <button id="cancelBtn" class="btn btn-danger flex-fill" disabled>Прервать</button>
                 </div>
-                <button id="resetStateBtn" class="btn btn-outline-secondary w-100 mt-2">Сбросить state</button>
+                <button id="resetStateBtn" class="btn btn-link text-body-secondary text-decoration-none w-100 mt-2 subtle-reset-btn">Сбросить state</button>
             </section>
 
             <hr class="my-3">
@@ -179,7 +202,6 @@
                         </svg>
                         <span class="visually-hidden">Закрепить</span>
                     </button>
-                    <button id="closeRightPanelBtn" class="btn btn-sm btn-outline-secondary">×</button>
                 </div>
             </div>
             <details id="eventsDetails" open>
@@ -206,6 +228,45 @@
     <div id="rightEdgeZone" class="edge-zone edge-zone-right" aria-hidden="true"></div>
 </div>
 
+<div class="modal fade" id="infoModal" tabindex="-1" aria-labelledby="infoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="infoModalLabel">Информация о программе</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2">ClimbTag помогает обрабатывать видео соревнований:</p>
+                <ul class="mb-0">
+                    <li>загружает видео из файла или по ссылке;</li>
+                    <li>сопоставляет найденные номера с CSV-протоколом;</li>
+                    <li>сохраняет таймкоды и формирует итоговый текст.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="howToModal" tabindex="-1" aria-labelledby="howToModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="howToModalLabel">Как работать</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <ol class="mb-0 ps-3">
+                    <li>Выберите источник видео: файл или ссылка.</li>
+                    <li>Загрузите CSV-протокол участников.</li>
+                    <li>Нажмите «Запустить» и дождитесь завершения анализа.</li>
+                    <li>Проверьте таймкоды и скачайте итоговый `.txt`.</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

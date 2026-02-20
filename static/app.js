@@ -43,8 +43,9 @@ const resetStateBtn = document.getElementById("resetStateBtn");
 
 const pinSidebarBtn = document.getElementById("pinSidebarBtn");
 const pinRightPanelBtn = document.getElementById("pinRightPanelBtn");
-const closeSidebarBtn = document.getElementById("closeSidebarBtn");
-const closeRightPanelBtn = document.getElementById("closeRightPanelBtn");
+const topHamburgerBtn = document.getElementById("topHamburgerBtn");
+const videoFileIcon = document.getElementById("videoFileIcon");
+const csvFileIcon = document.getElementById("csvFileIcon");
 
 const videoPlayer = document.getElementById("videoPlayer");
 const overlayCanvas = document.getElementById("overlayCanvas");
@@ -73,9 +74,12 @@ let userExplicitlyUnmuted = false;
 let currentMediaKey = null;
 let pendingSeekSeconds = null;
 let logsSelectionLocked = false;
+let isStateLoading = false;
+let stateLoadFailures = 0;
 
 const ACTIVE_PHASES = new Set(["uploading", "downloading", "converting", "processing"]);
 const UI_CACHE_KEY = "video_app_v5_ui";
+const CSV_SIZE_CACHE_KEY = "video_app_v5_csv_sizes";
 
 function normalizePhase(phase) {
     return String(phase || "idle").trim().toLowerCase();
@@ -132,6 +136,36 @@ function composeVideoLabel(name, bytes) {
     return size ? `${name} · ${size}` : name;
 }
 
+function readCsvSizeCache() {
+    try {
+        const raw = localStorage.getItem(CSV_SIZE_CACHE_KEY);
+        if (!raw) {
+            return {};
+        }
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function writeCsvSizeCache(cache) {
+    try {
+        localStorage.setItem(CSV_SIZE_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+        // ignore storage errors
+    }
+}
+
+function cacheCsvSize(name, size) {
+    if (!name || !Number.isFinite(size) || size <= 0) {
+        return;
+    }
+    const cache = readCsvSizeCache();
+    cache[name] = size;
+    writeCsvSizeCache(cache);
+}
+
 function formatDuration(seconds) {
     const total = Math.max(0, Math.floor(seconds));
     const m = Math.floor(total / 60);
@@ -171,13 +205,35 @@ function setVideoSource(mode) {
 }
 
 function resetFileDisplay() {
-    fileNameDisplay.innerText = ".mp4, .mov, .avi";
+    fileNameDisplay.innerText = "";
     clearFileBtn.hidden = true;
+    fileInfoRow.hidden = true;
+    if (videoFileIcon) {
+        videoFileIcon.hidden = true;
+    }
 }
 
 function resetCsvDisplay() {
-    csvNameDisplay.innerText = ".csv";
+    csvNameDisplay.innerText = "";
     clearCsvBtn.hidden = true;
+    csvInfoRow.hidden = true;
+    if (csvFileIcon) {
+        csvFileIcon.hidden = true;
+    }
+}
+
+function setVideoInfoVisible(visible) {
+    fileInfoRow.hidden = !visible;
+    if (videoFileIcon) {
+        videoFileIcon.hidden = !visible;
+    }
+}
+
+function setCsvInfoVisible(visible) {
+    csvInfoRow.hidden = !visible;
+    if (csvFileIcon) {
+        csvFileIcon.hidden = !visible;
+    }
 }
 
 function readSettingsFromUI() {
@@ -207,8 +263,8 @@ function applySettingsFromState(state) {
 function getUIPrefs(state) {
     const ui = state?.ui || {};
     return {
-        sidebar_hidden: Boolean(ui.sidebar_hidden),
-        right_panel_collapsed: Boolean(ui.right_panel_collapsed),
+        sidebar_hidden: ui.sidebar_hidden !== false,
+        right_panel_collapsed: ui.right_panel_collapsed !== false,
         sidebar_pinned: Boolean(ui.sidebar_pinned),
         right_panel_pinned: Boolean(ui.right_panel_pinned),
         events_open: ui.events_open !== false,
@@ -304,6 +360,7 @@ function updateControls(state) {
 
     startBtn.disabled = !canStart;
     cancelBtn.disabled = !canCancel;
+    cancelBtn.title = canCancel ? "Прервать анализ с сохранением текущих результатов" : "";
     downloadBtn.disabled = operationActive || !isUrlMode;
     fileInput.disabled = operationActive || !isFileMode;
     filePickBtn.disabled = operationActive || !isFileMode;
@@ -316,6 +373,8 @@ function updateControls(state) {
     clearCsvBtn.disabled = operationActive;
     videoSourceFile.disabled = operationActive;
     videoSourceUrl.disabled = operationActive;
+    resultsText.disabled = operationActive;
+    downloadTxtBtn.disabled = operationActive && !resultsText.value.trim();
 
     spinnerWrap.classList.toggle("d-none", !operationActive);
     processStatusWrap.hidden = !operationActive;
@@ -343,18 +402,28 @@ function updateControls(state) {
     if (state.video) {
         fileNameDisplay.innerText = composeVideoLabel(state.video, state.video_bytes);
         clearFileBtn.hidden = false;
+        setVideoInfoVisible(true);
     } else if (fileInput.files && fileInput.files[0]) {
         fileNameDisplay.innerText = composeVideoLabel(fileInput.files[0].name, fileInput.files[0].size);
         clearFileBtn.hidden = false;
+        setVideoInfoVisible(true);
     } else {
         resetFileDisplay();
     }
     if (state.protocol_csv) {
-        csvNameDisplay.innerText = state.protocol_csv;
+        const stateCsvSize = Number(state.protocol_csv_bytes);
+        let csvSize = Number.isFinite(stateCsvSize) && stateCsvSize > 0 ? stateCsvSize : null;
+        if (!csvSize) {
+            const cached = readCsvSizeCache()[state.protocol_csv];
+            csvSize = Number.isFinite(cached) && cached > 0 ? cached : null;
+        }
+        csvNameDisplay.innerText = composeVideoLabel(state.protocol_csv, csvSize);
         clearCsvBtn.hidden = false;
+        setCsvInfoVisible(true);
     } else if (csvInput.files && csvInput.files[0]) {
-        csvNameDisplay.innerText = csvInput.files[0].name;
+        csvNameDisplay.innerText = composeVideoLabel(csvInput.files[0].name, csvInput.files[0].size);
         clearCsvBtn.hidden = false;
+        setCsvInfoVisible(true);
     } else {
         resetCsvDisplay();
     }
@@ -578,7 +647,12 @@ function renderState(state) {
 }
 
 async function fetchState() {
-    const res = await fetch("/state");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch("/state", {
+        cache: "no-store",
+        signal: controller.signal
+    }).finally(() => clearTimeout(timeoutId));
     if (!res.ok) {
         throw new Error(`State request failed: ${res.status}`);
     }
@@ -586,11 +660,21 @@ async function fetchState() {
 }
 
 async function loadState() {
+    if (isStateLoading) {
+        return;
+    }
+    isStateLoading = true;
     try {
         const state = await fetchState();
+        stateLoadFailures = 0;
         renderState(state);
     } catch {
-        uploadStatus.innerText = "Не удалось загрузить состояние";
+        stateLoadFailures += 1;
+        if (stateLoadFailures >= 2) {
+            uploadStatus.innerText = "Не удалось загрузить состояние. Проверьте, не завис ли процесс.";
+        }
+    } finally {
+        isStateLoading = false;
     }
 }
 
@@ -654,6 +738,7 @@ fileInput.addEventListener("change", function () {
     }
 
     fileNameDisplay.innerText = file.name;
+    setVideoInfoVisible(true);
     clearFileBtn.hidden = false;
     uploadStatus.innerText = "Загрузка...";
     processStatusWrap.hidden = false;
@@ -697,7 +782,9 @@ csvInput.addEventListener("change", function () {
         return;
     }
 
-    csvNameDisplay.innerText = file.name;
+    csvNameDisplay.innerText = composeVideoLabel(file.name, file.size);
+    cacheCsvSize(file.name, file.size);
+    setCsvInfoVisible(true);
     clearCsvBtn.hidden = false;
     const formData = new FormData();
     formData.append("file", file);
@@ -829,15 +916,13 @@ resetStateBtn.addEventListener("click", async () => {
     void loadState();
 });
 
-closeSidebarBtn.addEventListener("click", () => {
-    void persistUiPatch({ sidebar_hidden: true });
-    setSidebarHoverOpen(false);
-});
-
-closeRightPanelBtn.addEventListener("click", () => {
-    void persistUiPatch({ right_panel_collapsed: true });
-    setRightHoverOpen(false);
-});
+if (topHamburgerBtn) {
+    topHamburgerBtn.addEventListener("click", () => {
+        const current = getUIPrefs(latestState || {});
+        void persistUiPatch({ sidebar_hidden: !current.sidebar_hidden });
+        setSidebarHoverOpen(false);
+    });
+}
 
 pinSidebarBtn.addEventListener("click", () => {
     const current = getUIPrefs(latestState || {});
@@ -908,6 +993,10 @@ downloadTxtBtn.addEventListener("click", () => {
 });
 
 resultsText.addEventListener("input", () => {
+    const phase = normalizePhase(latestState?.phase);
+    if (ACTIVE_PHASES.has(phase) && latestState?.processing) {
+        return;
+    }
     if (saveTextTimer) {
         clearTimeout(saveTextTimer);
     }

@@ -1,4 +1,5 @@
 import time
+import multiprocessing as mp
 from pathlib import Path
 from threading import Lock, Thread
 from urllib.parse import unquote, urlparse
@@ -50,6 +51,12 @@ DEFAULT_SETTINGS = {
 _worker_lock = Lock()
 _worker_thread: Thread | None = None
 
+_process_lock = Lock()
+_process_worker: mp.Process | None = None
+_process_queue: mp.Queue | None = None
+_process_cancel: mp.Event | None = None
+_process_listener: Thread | None = None
+
 
 def _set_worker(thread: Thread):
     global _worker_thread
@@ -65,7 +72,38 @@ def _clear_worker():
 
 def _worker_active() -> bool:
     with _worker_lock:
-        return _worker_thread is not None and _worker_thread.is_alive()
+        thread_active = _worker_thread is not None and _worker_thread.is_alive()
+    with _process_lock:
+        process_active = _process_worker is not None and _process_worker.is_alive()
+    return thread_active or process_active
+
+
+def _set_process_worker(
+    process: mp.Process,
+    queue: mp.Queue,
+    cancel_event: mp.Event,
+    listener: Thread,
+):
+    global _process_worker, _process_queue, _process_cancel, _process_listener
+    with _process_lock:
+        _process_worker = process
+        _process_queue = queue
+        _process_cancel = cancel_event
+        _process_listener = listener
+
+
+def _clear_process_worker():
+    global _process_worker, _process_queue, _process_cancel, _process_listener
+    with _process_lock:
+        _process_worker = None
+        _process_queue = None
+        _process_cancel = None
+        _process_listener = None
+
+
+def _process_active() -> bool:
+    with _process_lock:
+        return _process_worker is not None and _process_worker.is_alive()
 
 
 def _cancel_requested() -> bool:
@@ -143,6 +181,144 @@ def _reconcile_runtime_state() -> dict:
     return state
 
 
+def _processing_worker_process(
+    source_path_str: str,
+    protocol_path_str: str,
+    model_path_str: str,
+    settings: dict,
+    queue: mp.Queue,
+    cancel_event: mp.Event,
+):
+    def send_patch(patch: dict):
+        queue.put({"type": "patch", "data": patch})
+
+    def send_event(message: str, *, event_type: str = "process", level: str = "info", details: dict | None = None):
+        payload = {"type": "event", "message": message, "event_type": event_type, "level": level}
+        if details:
+            payload["details"] = details
+        queue.put(payload)
+
+    try:
+        source_path = Path(source_path_str)
+        protocol_path = Path(protocol_path_str)
+        model_path = Path(model_path_str)
+
+        analysis_path, was_converted = ensure_playable_input(
+            source_path,
+            CONVERTED_DIR,
+            check_cancel=cancel_event.is_set,
+            progress_cb=lambda p: send_patch({"phase": "converting", "progress": p}),
+            event_cb=lambda msg: send_event(msg),
+        )
+
+        if cancel_event.is_set():
+            raise CancelledError("cancelled after conversion")
+
+        converted_bytes = analysis_path.stat().st_size if was_converted else None
+        send_patch({
+            "phase": "converted",
+            "progress": 100,
+            "phase_started_at": time.time(),
+            "converted": analysis_path.name if was_converted else None,
+            "converted_bytes": converted_bytes,
+        })
+
+        send_patch({"phase": "processing", "progress": 0, "phase_started_at": time.time()})
+
+        analysis = run_protocol_analysis(
+            analysis_path,
+            protocol_path,
+            model_path,
+            settings=settings,
+            partial_cb=lambda patch: send_patch(patch),
+            check_cancel=cancel_event.is_set,
+            progress_cb=lambda p: send_patch({"progress": p}),
+            event_cb=lambda msg: send_event(msg),
+        )
+
+        if cancel_event.is_set():
+            raise CancelledError("cancelled before finishing")
+
+        send_patch({
+            "phase": "done",
+            "progress": 100,
+            "phase_started_at": time.time(),
+            "processing": False,
+            "cancel_requested": False,
+            "converted_bytes": converted_bytes,
+            **analysis,
+        })
+        send_event("Pipeline done", event_type="process")
+    except CancelledError:
+        send_patch({
+            "phase": "idle",
+            "progress": 0,
+            "phase_started_at": None,
+            "processing": False,
+            "cancel_requested": False,
+        })
+        send_event("Pipeline cancelled", event_type="process", level="warning")
+    except FileNotFoundError:
+        send_patch({
+            "phase": "error",
+            "processing": False,
+            "phase_started_at": time.time(),
+            "cancel_requested": False,
+        })
+        send_event("Pipeline failed: source video not found", event_type="process", level="error")
+    except ProcessingError as exc:
+        send_patch({
+            "phase": "error",
+            "processing": False,
+            "phase_started_at": time.time(),
+            "cancel_requested": False,
+        })
+        send_event(f"Pipeline failed: {exc}", event_type="process", level="error")
+    except Exception as exc:
+        send_patch({
+            "phase": "error",
+            "processing": False,
+            "phase_started_at": time.time(),
+            "cancel_requested": False,
+        })
+        send_event(f"Pipeline failed: {exc}", event_type="process", level="error")
+    finally:
+        queue.put({"type": "final"})
+
+
+def _start_process_listener(queue: mp.Queue, process: mp.Process) -> Thread:
+    def _listener():
+        while True:
+            try:
+                message = queue.get(timeout=0.5)
+            except Exception:
+                if not process.is_alive():
+                    break
+                continue
+
+            if not isinstance(message, dict):
+                continue
+
+            msg_type = message.get("type")
+            if msg_type == "patch":
+                update_state(message.get("data", {}))
+            elif msg_type == "event":
+                append_event(
+                    message.get("message", ""),
+                    event_type=message.get("event_type", "process"),
+                    level=message.get("level", "info"),
+                    details=message.get("details"),
+                )
+            elif msg_type == "final":
+                break
+
+        _clear_process_worker()
+
+    listener = Thread(target=_listener, daemon=True)
+    listener.start()
+    return listener
+
+
 def _download_with_ytdlp(url: str, *, start_time: int | None = None, end_time: int | None = None) -> Path:
     if yt_dlp is None:
         raise RuntimeError("yt-dlp is not installed")
@@ -164,7 +340,7 @@ def _download_with_ytdlp(url: str, *, start_time: int | None = None, end_time: i
             update_state({"progress": int((downloaded * 100) / total)})
 
     opts = {
-        "format": "best[ext=mp4][height<=1080]/best[ext=mp4]/best",
+        "format": "best[ext=mp4][height<=720]/best[ext=mp4]/best",
         "outtmpl": output_template,
         "noplaylist": True,
         "progress_hooks": [hook],
@@ -861,11 +1037,30 @@ async def start_processing(payload: dict | None = None):
     if protocol_path.parent != PROTOCOL_DIR.resolve() or not protocol_path.exists():
         return JSONResponse({"error": "protocol csv not found"}, status_code=400)
 
-    update_state({"settings": settings})
+    update_state({
+        "phase": "converting",
+        "progress": 0,
+        "phase_started_at": time.time(),
+        "processing": True,
+        "cancel_requested": False,
+        "bboxes": [],
+        "timestamps": [],
+        "results_text": "",
+        "settings": settings,
+    })
+    append_event("Pipeline started", event_type="process", details={"video": source_name})
 
-    worker = Thread(target=_processing_worker, args=(source_name, settings), daemon=True)
-    _set_worker(worker)
-    worker.start()
+    ctx = mp.get_context("spawn")
+    queue = ctx.Queue()
+    cancel_event = ctx.Event()
+    process = ctx.Process(
+        target=_processing_worker_process,
+        args=(str(source_path), str(protocol_path), str(MODEL_PATH), settings, queue, cancel_event),
+        daemon=True,
+    )
+    process.start()
+    listener = _start_process_listener(queue, process)
+    _set_process_worker(process, queue, cancel_event, listener)
     return {"status": "accepted"}
 
 
@@ -874,6 +1069,29 @@ async def cancel_processing():
     if not _worker_active():
         return JSONResponse({"error": "no active process"}, status_code=409)
 
+    state = load_state()
+    already_requested = bool(state.get("cancel_requested"))
+
     update_state({"cancel_requested": True})
     append_event("Cancellation requested", event_type="process", level="warning")
+
+    with _process_lock:
+        process = _process_worker
+        cancel_event = _process_cancel
+
+    if cancel_event is not None:
+        cancel_event.set()
+
+    if already_requested and process is not None and process.is_alive():
+        process.terminate()
+        process.join(timeout=2)
+        _clear_process_worker()
+        update_state({
+            "phase": "idle",
+            "progress": 0,
+            "phase_started_at": None,
+            "processing": False,
+            "cancel_requested": False,
+        })
+        append_event("Process force-terminated after repeated cancel", event_type="process", level="warning")
     return {"status": "accepted"}

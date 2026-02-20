@@ -1,20 +1,183 @@
 :root {
-    --app-bg: #f3f6fb;
+    --topbar-height: 58px;
+    --app-bg: #f8fbff;
     --side-bg: #ffffff;
     --panel-bg: #ffffff;
-    --panel-border: #dce3ee;
+    --panel-border: #d7e7ff;
     --log-bg: #0d1117;
     --log-text: #b7c7e2;
 }
 
 body {
     margin: 0;
-    background: radial-gradient(circle at top right, #dce9ff 0%, var(--app-bg) 45%);
+    background: radial-gradient(circle at top right, #d7e8ff 0%, var(--app-bg) 48%);
+}
+
+.top-nav {
+    min-height: var(--topbar-height);
+    background: var(--bs-primary);
+    box-shadow: 0 8px 24px rgba(24, 65, 140, 0.22);
+    z-index: 1100;
+}
+
+.top-nav-hamburger {
+    width: 36px;
+    height: 36px;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none !important;
+    box-shadow: none !important;
+    color: #eaf3ff;
+    background: transparent;
+    user-select: none;
+}
+
+.top-nav-hamburger:hover,
+.top-nav-hamburger:focus {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+}
+
+.top-nav-link {
+    color: #eaf3ff !important;
+    text-decoration: none;
+    box-shadow: none !important;
+    padding: 0.25rem 0.4rem;
+    font-weight: 400;
+    user-select: none;
+}
+
+.top-nav-link:hover,
+.top-nav-link:focus {
+    color: #ffffff !important;
+    text-decoration: none;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 0.35rem;
+}
+
+.top-nav-link:focus-visible,
+.top-nav-hamburger:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.45) !important;
+}
+
+.top-nav-actions {
+    margin-left: auto;
+    padding-left: 1rem;
+}
+
+.card-header {
+    background: rgba(55, 125, 255, 0.08);
+    border-bottom-color: var(--panel-border);
+}
+
+.subtle-reset-btn {
+    opacity: 0.72;
+    font-size: 0.86rem;
+}
+
+.subtle-reset-btn:hover,
+.subtle-reset-btn:focus {
+    opacity: 1;
+}
+
+.min-w-0 {
+    min-width: 0;
+}
+
+.info-file-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 auto;
+    color: #4773b3;
+}
+
+#videoFileIcon,
+#csvFileIcon {
+    display: none !important;
+}
+
+#fileInfoRow:not([hidden]) #videoFileIcon,
+#csvInfoRow:not([hidden]) #csvFileIcon {
+    display: inline-block !important;
+}
+
+#fileNameDisplay,
+#csvNameDisplay {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.clear-icon-btn {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent;
+    color: #8c96a8;
+    font-size: 1.55rem;
+    line-height: 1;
+    padding: 0 0.2rem;
+}
+
+.clear-icon-btn:hover,
+.clear-icon-btn:focus {
+    background: transparent;
+    color: #6f7b8f;
+}
+
+#pinSidebarBtn,
+#pinRightPanelBtn,
+#copyEventsBtn {
+    border: none;
+    box-shadow: none !important;
+    background: transparent;
+    color: #6b7d99;
+    padding: 0.15rem 0.3rem;
+}
+
+#pinSidebarBtn:hover,
+#pinRightPanelBtn:hover,
+#copyEventsBtn:hover,
+#pinSidebarBtn:focus,
+#pinRightPanelBtn:focus,
+#copyEventsBtn:focus {
+    background: rgba(74, 150, 255, 0.12);
+    color: #3f5f94;
+}
+
+#pinSidebarBtn.btn-secondary,
+#pinRightPanelBtn.btn-secondary {
+    background: rgba(74, 150, 255, 0.2);
+    color: #2f60b5;
+}
+
+#pinSidebarBtn svg,
+#pinRightPanelBtn svg,
+#copyEventsBtn svg {
+    width: 18px;
+    height: 18px;
+}
+
+[aria-label="Источник видео"] .btn {
+    border-color: #88a8da;
+    color: #4068a8;
+    background: #f2f7ff;
+}
+
+[aria-label="Источник видео"] .btn-check:checked + .btn {
+    background: var(--bs-primary);
+    border-color: var(--bs-primary);
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 0 0 1px rgba(30, 78, 153, 0.2) inset;
 }
 
 .app-shell {
     min-height: 100vh;
     position: relative;
+    padding-top: var(--topbar-height);
 }
 
 .app-shell.ui-booting {
@@ -23,7 +186,7 @@ body {
 
 .edge-zone {
     position: fixed;
-    top: 0;
+    top: var(--topbar-height);
     bottom: 0;
     width: 14px;
     z-index: 1050;
@@ -50,8 +213,8 @@ body {
     background: var(--side-bg);
     position: fixed;
     left: 0;
-    top: 0;
-    height: 100vh;
+    top: var(--topbar-height);
+    height: calc(100vh - var(--topbar-height));
     width: 360px;
     overflow: auto;
     z-index: 1040;
@@ -130,8 +293,8 @@ body {
     background: var(--side-bg);
     position: fixed;
     right: 0;
-    top: 0;
-    height: 100vh;
+    top: var(--topbar-height);
+    height: calc(100vh - var(--topbar-height));
     width: 360px;
     overflow: auto;
     z-index: 1040;
