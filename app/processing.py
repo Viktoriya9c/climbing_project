@@ -36,7 +36,7 @@ def _ffprobe_duration(video_path: Path) -> float:
         "default=noprint_wrappers=1:nokey=1",
         str(video_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:
         stderr = (proc.stderr or "").strip()
         if stderr:
@@ -67,7 +67,7 @@ def _ffprobe_stream_info(video_path: Path) -> dict:
         "-show_streams",
         str(video_path),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     if proc.returncode != 0:
         raise RuntimeError("ffprobe failed for stream info")
     return json.loads(proc.stdout or "{}")
@@ -160,6 +160,8 @@ def convert_for_web(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
     time_re = re.compile(r"time=(\d\d:\d\d:\d\d(?:\.\d+)?)")

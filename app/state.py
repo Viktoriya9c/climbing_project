@@ -97,7 +97,7 @@ def load_state():
             return dict(_runtime_state)
 
         try:
-            loaded = json.loads(STATE_FILE.read_text() or "{}")
+            loaded = json.loads(STATE_FILE.read_text(encoding="utf-8") or "{}")
         except json.JSONDecodeError:
             loaded = {}
 
@@ -133,7 +133,7 @@ def load_state():
 def save_state(state: dict):
     with _lock:
         global _state_version
-        STATE_FILE.write_text(json.dumps(_persisted_state(state), indent=2))
+        STATE_FILE.write_text(json.dumps(_persisted_state(state), indent=2, ensure_ascii=False), encoding="utf-8")
         _state_version += 1
         _state_changed.notify_all()
 

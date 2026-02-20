@@ -528,6 +528,8 @@ def _trim_video(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
     try:
@@ -566,6 +568,8 @@ def _remux_to_mp4(source_path: Path, output_dir: Path, *, check_cancel) -> Path:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
     try:
