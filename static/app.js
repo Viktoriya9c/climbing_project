@@ -354,9 +354,9 @@ function updateControls(state) {
     const processing = Boolean(state.processing);
     const hasVideo = Boolean(state.video);
     const hasProtocol = Boolean(state.protocol_csv);
-    const canStart = hasVideo && hasProtocol && (phase === "uploaded" || phase === "downloaded" || phase === "done" || phase === "converted");
-    const canCancel = ACTIVE_PHASES.has(phase) && processing;
     const operationActive = ACTIVE_PHASES.has(phase) && processing;
+    const canStart = hasVideo && hasProtocol && !operationActive;
+    const canCancel = ACTIVE_PHASES.has(phase) && processing;
     const isUrlMode = videoSourceUrl?.checked;
     const isFileMode = videoSourceFile?.checked;
 
