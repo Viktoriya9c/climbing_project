@@ -3,7 +3,7 @@ PYTHON=$(VENV)/bin/python
 PIP=$(VENV)/bin/pip
 APP=app.main:app
 HOST=0.0.0.0
-PORT=8000
+PORT=8888
 
 .PHONY: venv install run test clean docker-build docker-up docker-down
 

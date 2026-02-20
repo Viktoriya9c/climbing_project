@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import uuid
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -15,6 +17,7 @@ _lock = RLock()
 _state_changed = Condition(_lock)
 _runtime_state: dict | None = None
 _state_version = 0
+_process_boot_id = uuid.uuid4().hex
 
 _event_logger = logging.getLogger("climbtag.events")
 if not _event_logger.handlers:
@@ -58,7 +61,11 @@ def _default_state():
             "right_panel_pinned": False,
             "events_open": True,
             "state_open": False,
-        }
+        },
+        "probe_runtime_id": _process_boot_id,
+        "probe_pid": os.getpid(),
+        "probe_persist_id": None,
+        "probe_startups": 0,
     }
 
 
@@ -67,6 +74,7 @@ def _persisted_state(state: dict) -> dict:
     settings = state.get("settings") if isinstance(state.get("settings"), dict) else {}
     ui = state.get("ui") if isinstance(state.get("ui"), dict) else {}
     playback = state.get("playback") if isinstance(state.get("playback"), dict) else {"source": None, "position": 0}
+    timestamps = state.get("timestamps") if isinstance(state.get("timestamps"), list) else []
     return {
         "settings": settings,
         "ui": ui,
@@ -80,6 +88,9 @@ def _persisted_state(state: dict) -> dict:
         "video_bytes": state.get("video_bytes"),
         "converted_bytes": state.get("converted_bytes"),
         "results_text": state.get("results_text", ""),
+        "timestamps": timestamps,
+        "probe_persist_id": state.get("probe_persist_id"),
+        "probe_startups": int(state.get("probe_startups", 0) or 0),
     }
 
 
@@ -110,6 +121,16 @@ def load_state():
             settings = {}
         state = dict(default)
         state["settings"] = {**default["settings"], **settings}
+        state["probe_runtime_id"] = _process_boot_id
+        state["probe_pid"] = os.getpid()
+        persisted_probe = loaded.get("probe_persist_id")
+        if not isinstance(persisted_probe, str) or not persisted_probe:
+            persisted_probe = uuid.uuid4().hex
+        loaded_startups = loaded.get("probe_startups", 0)
+        if not isinstance(loaded_startups, int):
+            loaded_startups = 0
+        state["probe_persist_id"] = persisted_probe
+        state["probe_startups"] = loaded_startups + 1
         if isinstance(loaded.get("ui"), dict):
             state["ui"] = {**default["ui"], **loaded["ui"]}
         if isinstance(loaded.get("playback"), dict):
@@ -122,6 +143,8 @@ def load_state():
         for field in ("video", "converted", "protocol_csv", "video_bytes", "converted_bytes", "results_text"):
             if field in loaded:
                 state[field] = loaded.get(field)
+        if isinstance(loaded.get("timestamps"), list):
+            state["timestamps"] = loaded["timestamps"]
         _runtime_state = state
 
         if _persisted_state(state) != loaded:

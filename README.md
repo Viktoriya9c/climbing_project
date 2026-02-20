@@ -30,7 +30,7 @@ make install
 make run
 ```
 
-Открыть: `http://localhost:8000`
+Открыть: `http://localhost:8888`
 
 ## Make targets
 - `make install` — создать `.venv` и установить зависимости
@@ -47,7 +47,7 @@ make docker-build
 make docker-up
 ```
 
-Сервис поднимается на `http://localhost:8000`.
+Сервис поднимается на `http://localhost:8888`.
 
 ## Структура проекта
 - `app/main.py` — API, фоновые воркеры, orchestration pipeline

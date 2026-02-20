@@ -656,6 +656,17 @@ async def get_state():
     return _reconcile_runtime_state()
 
 
+@app.get("/state/probe")
+async def get_state_probe():
+    state = _reconcile_runtime_state()
+    return {
+        "probe_runtime_id": state.get("probe_runtime_id"),
+        "probe_pid": state.get("probe_pid"),
+        "probe_persist_id": state.get("probe_persist_id"),
+        "probe_startups": state.get("probe_startups"),
+    }
+
+
 @app.get("/state/stream")
 async def state_stream(request: Request):
     async def _events():

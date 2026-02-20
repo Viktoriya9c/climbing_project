@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: video-app-v5
     ports:
-      - "8000:8000"
+      - "8888:8888"
     volumes:
       - ./input:/app/input
       - ./outputs:/app/outputs
