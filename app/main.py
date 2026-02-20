@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import time
 import multiprocessing as mp
 from pathlib import Path
@@ -36,8 +38,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CONVERTED_DIR.mkdir(parents=True, exist_ok=True)
 PROTOCOL_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 ACTIVE_PHASES = {"uploading", "downloading", "converting", "processing"}
@@ -113,6 +115,19 @@ def _cancel_requested() -> bool:
 def _safe_name(raw_name: str | None, fallback: str) -> str:
     cleaned = Path(unquote(raw_name or "")).name.strip()
     return cleaned or fallback
+
+
+def _safe_unlink(path: Path, *, retries: int = 3, delay_sec: float = 0.1):
+    for attempt in range(retries):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if attempt == retries - 1:
+                return
+            time.sleep(delay_sec)
+        except OSError:
+            return
 
 
 def _normalize_phase(raw: str | None) -> str:
@@ -401,7 +416,7 @@ def _download_direct(url: str) -> Path:
                 if not chunk:
                     continue
                 if _cancel_requested():
-                    file_path.unlink(missing_ok=True)
+                    _safe_unlink(file_path)
                     raise CancelledError("download cancelled")
 
                 out.write(chunk)
@@ -640,7 +655,7 @@ async def upload_video(file: UploadFile = File(...)):
                 total_read += len(chunk)
                 if total_read > MAX_UPLOAD_BYTES:
                     out.close()
-                    file_path.unlink(missing_ok=True)
+                    _safe_unlink(file_path)
                     update_state({
                         "phase": "error",
                         "processing": False,
@@ -668,7 +683,7 @@ async def upload_video(file: UploadFile = File(...)):
     try:
         validate_video_file(file_path)
     except ProcessingError as exc:
-        file_path.unlink(missing_ok=True)
+        _safe_unlink(file_path)
         patch = {"phase": "error", "processing": False, "progress": 0, "phase_started_at": time.time()}
         if load_state().get("video") == file_name:
             patch["video"] = None
@@ -731,12 +746,12 @@ async def clear_video():
     if video_name:
         path = (UPLOAD_DIR / video_name).resolve()
         if path.parent == UPLOAD_DIR.resolve():
-            path.unlink(missing_ok=True)
+            _safe_unlink(path)
 
     if converted_name:
         path = (CONVERTED_DIR / converted_name).resolve()
         if path.parent == CONVERTED_DIR.resolve():
-            path.unlink(missing_ok=True)
+            _safe_unlink(path)
 
     update_state({
         "video": None,
@@ -767,7 +782,7 @@ async def clear_protocol():
     if protocol_name:
         path = (PROTOCOL_DIR / protocol_name).resolve()
         if path.parent == PROTOCOL_DIR.resolve():
-            path.unlink(missing_ok=True)
+            _safe_unlink(path)
 
     update_state({"protocol_csv": None})
     append_event("Protocol CSV cleared from UI", event_type="event", level="warning")
