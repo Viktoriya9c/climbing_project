@@ -32,6 +32,8 @@ make run
 
 Открыть: `http://localhost:8888`
 
+Для Windows см. отдельную инструкцию: `README-Windows.md`
+
 ## Make targets
 - `make install` — создать `.venv` и установить зависимости
 - `make run` — запуск FastAPI/uvicorn

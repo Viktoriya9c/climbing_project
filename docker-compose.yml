@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: video-app-v5
     ports:
       - "8888:8888"
     volumes:
